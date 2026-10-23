@@ -1,0 +1,49 @@
+{
+  "2alinked": {
+    "description": "",
+    "label": "2Alinked",
+    "slots": [
+      {
+        "kind": "part",
+        "part": "SignalHC"
+      },
+      {
+        "kind": "vh"
+      },
+      {
+        "kind": "part",
+        "part": "CHandCT"
+      },
+      {
+        "kind": "part",
+        "part": "Furin"
+      },
+      {
+        "kind": "part",
+        "part": "F2A"
+      },
+      {
+        "kind": "part",
+        "part": "SignalLC"
+      },
+      {
+        "kind": "vl"
+      },
+      {
+        "kind": "light_constant"
+      },
+      {
+        "kind": "part",
+        "part": "T2A"
+      },
+      {
+        "kind": "part",
+        "part": "EGFP"
+      },
+      {
+        "kind": "stop"
+      }
+    ],
+    "updated_utc": "2026-10-23T01:54:48+00:00"
+  }
+}

@@ -1,0 +1,14 @@
+# Local agent context, not part of the project
+CLAUDE.md
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Tool output, reproducible from the inputs above
+sequences_clean.fasta
+bcr_constructs.fasta
+
+# Runtime state the app rewrites as it is used.
+# data/presets.json is deliberately NOT ignored: saved layouts are real work.
+data/*.csv

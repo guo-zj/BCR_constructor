@@ -1,0 +1,18 @@
+{
+  "default": "single_chain_bcr",
+  "presets": {
+    "single_chain_bcr": {
+      "label": "Single chain BCR",
+      "description": "Membrane-bound single-chain BCR: the light chain and its constant region first, then a flexible linker, then the heavy chain with CH1-CH3 and the transmembrane tail.",
+      "slots": [
+        { "kind": "part", "part": "SignalHC" },
+        { "kind": "vl" },
+        { "kind": "light_constant" },
+        { "kind": "part", "part": "LinkerSC" },
+        { "kind": "vh" },
+        { "kind": "part", "part": "CHandCTSC" },
+        { "kind": "stop" }
+      ]
+    }
+  }
+}

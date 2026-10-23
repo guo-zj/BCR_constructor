@@ -1,0 +1,1244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BCR Constructor</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --border: #d9dde3;
+    --text: #1a1d21;
+    --muted: #5f6873;
+    --accent: #2f6fd0;
+    --ok-bg: #e6f4ea; --ok-fg: #16633a; --ok-br: #a8d8ba;
+    --warn-bg: #fdf3e2; --warn-fg: #8a5a00; --warn-br: #e8cf9a;
+    --fail-bg: #fdeaea; --fail-fg: #9b1c1c; --fail-br: #efb4b4;
+    --cut-bg: #f1f2f4; --cut-fg: #9aa4b1;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181c; --surface: #1d2127; --border: #30363d;
+      --text: #e6e9ee; --muted: #9aa4b1; --accent: #6ba3f5;
+      --ok-bg: #16301f; --ok-fg: #7fd49e; --ok-br: #2c5c3c;
+      --warn-bg: #352a14; --warn-fg: #e8c179; --warn-br: #5e4a1f;
+      --fail-bg: #38201f; --fail-fg: #f0a0a0; --fail-br: #653232;
+      --cut-bg: #22262c; --cut-fg: #6b7682;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 16px 64px; }
+  header h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.01em; }
+  header p { margin: 0 0 24px; color: var(--muted); font-size: 14px; }
+  code { font-family: var(--mono); font-size: 12.5px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .card > h2, details.card > summary > .t {
+    margin: 0; font-size: 16px; display: flex; align-items: baseline; gap: 10px;
+  }
+  .num {
+    font-size: 12px; color: var(--muted); font-weight: 600;
+    border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px;
+  }
+  .hint { margin: 6px 0 16px; color: var(--muted); font-size: 13.5px; }
+
+  /* Cards 1 and 3: folded by default, side by side. */
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .duo { grid-template-columns: 1fr; } }
+  .duo .card { margin-bottom: 0; }
+  details.card > summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center;
+    justify-content: space-between; gap: 10px;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary .chev { color: var(--muted); font-size: 12px; transition: transform .15s; }
+  details.card[open] > summary .chev { transform: rotate(90deg); }
+  details.card > summary .t { flex: 1; }
+  details.card > .body { padding-top: 14px; }
+
+  label.field { display: block; margin-bottom: 12px; }
+  label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+  input[type=text] {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--bg); color: var(--text);
+    font-family: var(--mono); font-size: 13px;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  button {
+    padding: 9px 16px; border: 1px solid transparent; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: 14px; font-weight: 550;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--accent); border-color: var(--border); }
+  button.small { padding: 5px 10px; font-size: 12.5px; }
+  button.preset { background: transparent; color: var(--text); border-color: var(--border); }
+  button.preset.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .check { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--muted); }
+
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 0; }
+  .pill {
+    font-size: 12.5px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .pill.ok { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-br); }
+  .pill.fail { background: var(--fail-bg); color: var(--fail-fg); border-color: var(--fail-br); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-br); }
+
+  .tablewrap { overflow-x: auto; margin-top: 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  td.mono, .mono { font-family: var(--mono); font-size: 12.5px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.pick, td.pick { width: 34px; }
+  .seq { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+
+  .note { font-size: 12.5px; margin: 3px 0 0; }
+  .note.warn { color: var(--warn-fg); }
+  .note.fail { color: var(--fail-fg); }
+  .banner, .ok-banner {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13.5px;
+    border: 1px solid var(--fail-br); background: var(--fail-bg); color: var(--fail-fg);
+  }
+  .ok-banner { border-color: var(--ok-br); background: var(--ok-bg); color: var(--ok-fg); }
+  .empty { color: var(--muted); font-size: 13.5px; margin-top: 14px; font-style: italic; }
+  details.sub summary { cursor: pointer; font-size: 12.5px; color: var(--accent); }
+  details.sub { margin-top: 5px; }
+  details.sub ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+
+  /* Where-to-trim view: cut flanks dimmed, kept V domain highlighted. */
+  .trimviz {
+    font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    word-break: break-all; margin-top: 8px; padding: 10px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+    max-height: 150px; overflow-y: auto;
+  }
+  .trimviz .cut {
+    background: var(--cut-bg); color: var(--cut-fg); text-decoration: line-through;
+    text-decoration-thickness: 1px; padding: 1px 0;
+  }
+  .trimviz .keep {
+    background: var(--ok-bg); color: var(--ok-fg); font-weight: 600; padding: 1px 0;
+  }
+  .trimlegend { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* Proposal / decision rows awaiting approval. */
+  .decide { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .decide.bad { border-color: var(--fail-br); background: var(--fail-bg); }
+  .decide.conflict { border-color: var(--warn-br); }
+  .decide .dh { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .decide .dh strong { font-family: var(--mono); font-size: 13.5px; }
+  .choices { display: flex; gap: 14px; margin-top: 8px; font-size: 13px; }
+  .choices label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  /* Layout visualiser */
+  .chain {
+    display: flex; align-items: stretch; flex-wrap: wrap;
+    margin-top: 14px; padding: 16px 14px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--bg);
+  }
+  .chain .term { align-self: center; font-size: 11.5px; font-weight: 700; color: var(--muted); letter-spacing: .05em; padding: 0 4px; }
+  .chain .arrow { align-self: center; color: var(--muted); padding: 0 6px; font-size: 13px; }
+  .chip { border: 1px solid var(--border); border-radius: 8px; padding: 7px 11px; background: var(--surface); min-width: 74px; text-align: center; }
+  .chip .nm { display: block; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .chip .dt { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .chip.k-vl, .chip.k-vh { border-color: var(--accent); }
+  .chip.k-vl .nm, .chip.k-vh .nm { color: var(--accent); }
+  .chip.k-light_constant { border-style: dashed; }
+  .chip.missing { border-color: var(--fail-br); background: var(--fail-bg); }
+  .chip.missing .dt { color: var(--fail-fg); }
+
+  .plan { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 14px; }
+  .plan.bad { border-color: var(--fail-br); }
+  .plan > .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .plan > .head strong { font-family: var(--mono); font-size: 14px; }
+  .cl-call {
+    font-size: 13px; padding: 3px 10px; border-radius: 20px; font-weight: 600;
+    background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-br);
+  }
+
+  /* Preset builder: palette tags and the drop zone */
+  .palgroup { margin-bottom: 10px; }
+  .palgroup .lbl {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin-bottom: 5px;
+  }
+  .tags { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag {
+    display: inline-flex; flex-direction: column; align-items: flex-start;
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    background: var(--surface); cursor: grab; user-select: none;
+  }
+  .tag:active { cursor: grabbing; }
+  .tag .nm { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .tag .dt { font-size: 11px; color: var(--muted); }
+  .tag.k-vl, .tag.k-vh { border-color: var(--accent); }
+  .tag.k-vl .nm, .tag.k-vh .nm { color: var(--accent); }
+  .tag.k-light_constant { border-style: dashed; }
+  .tag.k-stop .nm { color: var(--warn-fg); }
+
+  .dropzone {
+    display: flex; align-items: center; flex-wrap: wrap; min-height: 74px;
+    padding: 12px; border: 2px dashed var(--border); border-radius: 10px;
+    background: var(--bg);
+  }
+  .dropzone.over { border-color: var(--accent); }
+  .dropzone .ph { color: var(--muted); font-size: 13px; font-style: italic; }
+  .chain-tag {
+    display: inline-flex; align-items: center; gap: 4px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 5px 6px 5px 8px;
+    cursor: grab;
+  }
+  .chain-tag.dragging { opacity: .35; }
+  .chain-tag .nm { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+  .chain-tag.k-vl .nm, .chain-tag.k-vh .nm { color: var(--accent); }
+  .chain-tag.k-stop .nm { color: var(--warn-fg); }
+  .chain-tag button {
+    border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 0 2px; font-size: 13px; line-height: 1;
+  }
+  .chain-tag button:hover { color: var(--accent); }
+  .chain-tag button.x:hover { color: var(--fail-fg); }
+  .marker { width: 3px; align-self: stretch; background: var(--accent); border-radius: 2px; margin: 0 3px; }
+  .dz-arrow { color: var(--muted); padding: 0 5px; font-size: 12px; }
+
+  /* ---- Utility panel: bottom banner that opens over the page ---- */
+  body { padding-bottom: 68px; }           /* clear the fixed banner */
+  body.util-open { overflow: hidden; }
+
+  #utilBar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 12px 20px; background: var(--surface);
+    border-top: 1px solid var(--border); cursor: pointer;
+    box-shadow: 0 -2px 14px rgba(0,0,0,.07);
+    /* Slides up once the page has loaded, rather than snapping into place. */
+    transform: translateY(100%);
+    transition: transform .34s cubic-bezier(.22,1,.36,1),
+                background .15s ease, border-color .15s ease, box-shadow .15s ease;
+  }
+  #utilBar.ready { transform: none; }
+  #utilBar:hover {
+    background: var(--bg);
+    box-shadow: 0 -3px 18px rgba(0,0,0,.11);
+  }
+  #utilBar.ready:hover { transform: translateY(-1px); }
+  #utilBar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #utilBar.alert { border-top: 2px solid var(--fail-br); }
+  .ub-main { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .ub-ico { font-size: 15px; color: var(--muted); }
+  .ub-sub {
+    color: var(--muted); font-size: 13px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ub-right { display: flex; align-items: center; gap: 8px; flex: none; }
+  .ub-chev {
+    color: var(--muted); font-size: 10px;
+    transition: transform .3s cubic-bezier(.22,1,.36,1);
+  }
+  #utilBar[aria-expanded="true"] .ub-chev { transform: rotate(180deg); }
+
+  /* Anyone who asks for less motion gets none of the above. */
+  @media (prefers-reduced-motion: reduce) {
+    #utilBar, #utilPanel, .ub-chev { transition: none; }
+    #utilBar { transform: none; }
+  }
+  @media (max-width: 700px) { .ub-sub { display: none; } }
+
+  #utilPanel {
+    position: fixed; inset: 0; z-index: 50; background: var(--bg);
+    display: flex; flex-direction: column;
+    /* Rises from the banner it was opened from. `hidden` is only removed
+       before, and reapplied after, the transition -- see openUtil/closeUtil. */
+    opacity: 0; transform: translateY(100%);
+    transition: transform .3s cubic-bezier(.22,1,.36,1), opacity .22s ease;
+  }
+  #utilPanel.open { opacity: 1; transform: none; }
+  /* `display: flex` above beats the browser's own `[hidden] { display: none }`,
+     so the attribute needs restating here or the panel is always open. */
+  #utilPanel[hidden] { display: none; }
+  .up-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 12px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border); flex: none;
+  }
+  .up-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .uptab {
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    border-radius: 8px; padding: 7px 13px; font-size: 13.5px; font-weight: 550;
+  }
+  .uptab:hover { color: var(--text); border-color: var(--border); }
+  .uptab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .up-body { flex: 1; overflow-y: auto; padding: 20px 16px 48px; }
+  .up-body > .card { max-width: 1180px; margin: 0 auto; }
+  .util-pane > h2 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: baseline; gap: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>BCR Constructor</h1>
+  <p>
+    Human antibody chain typing and membrane-bound BCR assembly, following
+    <code>antibody-chain-rules.md</code>. Tables live in <code>{{ data_dir }}</code>.
+  </p>
+</header>
+
+<!-- Card 1 --------------------------------------------------------------- -->
+<section class="card">
+  <h2><span class="num">1</span> Antibody library <span id="abCount" class="pill"></span></h2>
+  <p class="hint">
+    Clean V domains in <code>antibodies.csv</code>. Tick the ones to assemble.
+  </p>
+  <div id="abOut"></div>
+</section>
+
+<!-- Card 2 --------------------------------------------------------------- -->
+<section class="card">
+  <h2><span class="num">2</span> Assembly layout <span id="selCount" class="pill"></span></h2>
+  <p class="hint">
+    Choose a preset to set the order of the assembled chain. Everything is
+    pulled from the stored tables — no FASTA files are read at this step.
+  </p>
+  <div class="row" id="presetRow"></div>
+  <p class="hint" id="presetDesc" style="margin:14px 0 0"></p>
+  <div id="layoutViz"></div>
+  <div class="row" style="margin-top:18px">
+    <button id="planBtn" disabled>Review build plan →</button>
+    <span class="check" id="planHint">Select antibodies in card 2 first.</span>
+  </div>
+</section>
+
+<!-- Card 3 --------------------------------------------------------------- -->
+<section class="card" id="card5" hidden>
+  <h2><span class="num">3</span> Build plan <span id="planCount" class="pill"></span></h2>
+  <p class="hint">
+    Each antibody's light constant region is resolved from its own
+    kappa/lambda call. Check it, then confirm to write the FASTA.
+  </p>
+  <div id="planOut"></div>
+  <label class="field" style="margin-top:18px">
+    <span>Write constructs to</span>
+    <input type="text" id="outPath" value="{{ default_output }}" spellcheck="false">
+  </label>
+  <div class="row">
+    <button id="buildBtn">Confirm and build</button>
+    <span class="check">The file is replaced, not appended to.</span>
+  </div>
+  <div id="buildOut"></div>
+</section>
+
+<!-- Card 4 --------------------------------------------------------------- -->
+<section class="card">
+  <h2><span class="num">4</span> Constructs library <span id="conCount" class="pill"></span></h2>
+  <p class="hint">
+    Assembled constructs in <code>constructs.csv</code>, with the segment map
+    each was built from. Tick rows to write them out again.
+  </p>
+  <div id="conOut"></div>
+  <div id="conExport" hidden>
+    <label class="field" style="margin-top:16px">
+      <span>Export selected to</span>
+      <input type="text" id="exportPath" value="{{ default_output }}" spellcheck="false">
+    </label>
+    <div class="row"><button id="exportBtn" class="ghost">Export selected</button></div>
+    <div id="exportOut"></div>
+  </div>
+</section>
+
+</div>
+
+<!-- Utility panel ------------------------------------------------------- -->
+<!-- A banner along the bottom; clicking it opens the panel over the page. -->
+<div id="utilBar" tabindex="0" role="button" aria-expanded="false"
+     aria-controls="utilPanel" title="Open utilities">
+  <span class="ub-main">
+    <span class="ub-ico">&#9881;</span>
+    <strong>Utilities</strong>
+    <span class="ub-sub">Sequence sanity check &middot; Construct parts &middot; Assembly presets</span>
+  </span>
+  <span class="ub-right">
+    <span class="pill" id="ubParts"></span>
+    <span class="pill" id="ubPresets"></span>
+    <span class="ub-chev">&#9650;</span>
+  </span>
+</div>
+
+<div id="utilPanel" hidden role="dialog" aria-modal="true" aria-label="Utilities">
+  <div class="up-head">
+    <div class="up-tabs">
+      <button class="uptab active" data-tab="util-check">Sequence sanity check</button>
+      <button class="uptab" data-tab="util-parts">Construct parts</button>
+      <button class="uptab" data-tab="util-presets">Assembly presets</button>
+    </div>
+    <button id="utilClose" class="ghost">Close &#10005;</button>
+  </div>
+  <div class="up-body">
+
+    <section class="card util-pane" id="util-check">
+      <h2>Sequence sanity check</h2>
+      <p class="hint">
+        Types each sequence, checks it against its <code>_VH</code> /
+        <code>_VL</code> header, and shows where it would be trimmed. Nothing
+        is stored until you approve it.
+      </p>
+      <label class="field">
+        <span>Path to the VH / VL FASTA file</span>
+        <input type="text" id="seqPath" value="{{ default_sequences }}" spellcheck="false">
+      </label>
+      <div class="row"><button id="processBtn">Process</button></div>
+      <div id="checkOut"></div>
+    </section>
+
+    <section class="card util-pane" id="util-parts" hidden>
+      <h2>Construct parts <span id="partCount" class="pill"></span></h2>
+      <p class="hint">
+        Signal peptide, linker, and constant regions. Each is validated to
+        begin at its own first residue. Stored as residues only &mdash; a trailing
+        stop codon is dropped here and appended once at build time. A part
+        already stored is compared against the incoming one before anything is
+        replaced.
+      </p>
+      <label class="field">
+        <span>Path to the parts FASTA file</span>
+        <input type="text" id="partsPath" value="{{ default_parts }}" spellcheck="false">
+      </label>
+      <div class="row"><button id="partsBtn">Preview import</button></div>
+      <div id="partsPreview"></div>
+      <div id="partsOut"></div>
+    </section>
+
+    <section class="card util-pane" id="util-presets" hidden>
+      <h2>Assembly presets <span id="presetCount" class="pill"></span></h2>
+  <p class="hint">
+    Drag components into the chain to set their order, N- to C-terminus.
+    IGKC and IGLC2 share one tag, because a layout picks between them per
+    antibody rather than naming one outright. Saved presets go to
+    <code>presets.json</code> and become selectable in the Assembly layout card.
+  </p>
+
+  <p class="hint" style="margin:0 0 6px"><strong>Components</strong> — drag one into the chain</p>
+  <div id="palette"></div>
+
+  <p class="hint" style="margin:18px 0 6px"><strong>Order</strong> — drag to rearrange, &times; to remove</p>
+  <div id="draftChain" class="dropzone"></div>
+  <div id="draftProblems"></div>
+
+  <div class="row" style="margin-top:16px; align-items:flex-end">
+    <label class="field" style="flex:1 1 220px; margin:0">
+      <span>Preset name</span>
+      <input type="text" id="presetLabel" placeholder="e.g. Heavy chain only" spellcheck="false">
+    </label>
+    <label class="field" style="flex:2 1 300px; margin:0">
+      <span>Description (optional)</span>
+      <input type="text" id="presetDescIn" placeholder="What this layout is for">
+    </label>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button id="savePresetBtn">Save preset</button>
+    <button id="loadBuiltinBtn" class="ghost">Start from the default</button>
+    <button id="clearDraftBtn" class="ghost">Clear</button>
+  </div>
+  <div id="savePresetOut"></div>
+
+  <p class="hint" style="margin:22px 0 6px"><strong>Saved presets</strong></p>
+  <div id="presetList"></div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+
+const selected  = new Set();   // antibody ids ticked in card 2
+const selectedC = new Set();   // construct ids ticked in card 4
+let lastCheckPath = null;      // re-read on approve rather than trusting the browser
+let lastPartsPath = null;
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let data;
+  try { data = await res.json(); }
+  catch { throw new Error(`Server returned ${res.status}`); }
+  if (!res.ok || data.ok === false) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+const banner = (m) => `<div class="banner">${esc(m)}</div>`;
+const okBanner = (m) => `<div class="ok-banner">${esc(m)}</div>`;
+
+/* ================= Utilities: check, then approve ================= */
+function trimViz(t) {
+  if (!t || !t.kept) return "";
+  let html = `<div class="trimviz">`;
+  if (t.n_seq) html += `<span class="cut">${esc(t.n_seq)}</span>`;
+  html += `<span class="keep">${esc(t.kept)}</span>`;
+  if (t.c_seq) html += `<span class="cut">${esc(t.c_seq)}</span>`;
+  html += `</div><p class="trimlegend">`;
+  const bits = [`V domain = residues ${t.v_start}–${t.v_end} of ${t.total}`];
+  if (t.n_count) bits.push(`${t.n_count} cut from the N-terminus`);
+  if (t.c_count) bits.push(`${t.c_count} cut from the C-terminus`);
+  if (!t.n_count && !t.c_count) bits.push("nothing to cut — already a clean V domain");
+  return html + esc(bits.join(" · ")) + `</p>`;
+}
+
+function renderCheck(d) {
+  const s = d.summary;
+  let html = `<div class="pills">
+    <span class="pill ${s.passed ? "ok" : ""}">${s.passed} passed</span>
+    <span class="pill ${s.failed ? "fail" : ""}">${s.failed} failed</span>
+    <span class="pill ${s.ready ? "ok" : "warn"}">${s.ready} ready to add</span>
+    <span class="pill warn">nothing stored yet</span>
+  </div>`;
+
+  for (const r of d.records) {
+    html += `<div class="decide ${r.status === "ok" ? "" : "bad"}"><div class="dh">
+      <strong>${esc(r.name)}</strong>`;
+    html += r.status === "ok"
+      ? `<span class="pill ok">${esc(r.detected)}${r.subclass ? " / " + esc(r.subclass) : ""}</span>
+         <span class="pill">${r.length} aa</span>
+         <span class="pill">${esc(r.confidence)} confidence</span>`
+      : `<span class="pill fail">failed</span>`;
+    html += `</div>`;
+    for (const e of r.errors)   html += `<p class="note fail">${esc(e)}</p>`;
+    for (const w of r.warnings) html += `<p class="note warn">${esc(w)}</p>`;
+    html += trimViz(r.trim);
+    if (r.evidence.length) {
+      html += `<details class="sub"><summary>evidence</summary><ul>` +
+        r.evidence.map((x) => `<li>${esc(x)}</li>`).join("") + `</ul></details>`;
+    }
+    html += `</div>`;
+  }
+
+  if (d.proposals.length) {
+    html += `<p class="hint" style="margin:18px 0 0"><strong>Add to the library</strong></p>`;
+    for (const p of d.proposals) {
+      html += `<div class="decide ${p.ready ? "" : "bad"}"><div class="dh">`;
+      if (p.ready) {
+        html += `<label class="check"><input type="checkbox" data-approve="${esc(p.id)}" checked>
+          <strong>${esc(p.id)}</strong></label>
+          <span class="pill ${p.action === "add" ? "ok" : "warn"}">${esc(p.action)}</span>`;
+        if (p.action === "replace") {
+          html += `<span class="pill ${p.changed ? "warn" : ""}">${
+            p.changed ? "sequences differ from the stored row" : "same sequences as stored"}</span>`;
+        }
+      } else {
+        html += `<strong>${esc(p.id)}</strong><span class="pill fail">${esc(p.action)}</span>`;
+      }
+      html += `</div><p class="note">${esc(p.detail)}</p></div>`;
+    }
+    html += `<div class="row" style="margin-top:14px">
+      <button id="approveBtn" ${s.ready ? "" : "disabled"}>Approve and add to library</button>
+    </div>`;
+  }
+
+  $("checkOut").innerHTML = html + `<div id="approveOut"></div>`;
+  const btn = $("approveBtn");
+  if (btn) btn.onclick = approve;
+}
+
+async function approve() {
+  const ids = [...document.querySelectorAll("[data-approve]")]
+    .filter((b) => b.checked).map((b) => b.dataset.approve);
+  if (!ids.length) { $("approveOut").innerHTML = banner("Nothing ticked."); return; }
+  const btn = $("approveBtn");
+  btn.disabled = true;
+  try {
+    const d = await postJSON("/api/approve", { path: lastCheckPath, ids });
+    const added = d.saved.map((s) => `${s.id} (${s.outcome})`).join(", ");
+    let msg = `Stored ${d.saved.length}: ${added}`;
+    if (d.skipped.length) msg += `. Skipped ${d.skipped.map((s) => s.id).join(", ")}`;
+    $("approveOut").innerHTML = okBanner(msg);
+    renderAntibodies(d.library);
+  } catch (e) {
+    $("approveOut").innerHTML = banner(e.message);
+    btn.disabled = false;
+  }
+}
+
+$("processBtn").onclick = async () => {
+  const btn = $("processBtn");
+  btn.disabled = true;
+  $("checkOut").innerHTML = `<p class="empty">Processing…</p>`;
+  try {
+    lastCheckPath = $("seqPath").value;
+    renderCheck(await postJSON("/api/check", { path: lastCheckPath }));
+  } catch (e) {
+    $("checkOut").innerHTML = banner(e.message);
+  } finally { btn.disabled = false; }
+};
+
+/* ================= Utilities: parts preview, decide, apply ================= */
+function renderPartsPreview(d) {
+  const s = d.summary;
+  let html = `<div class="pills">
+    <span class="pill ${s.new ? "ok" : ""}">${s.new} new</span>
+    <span class="pill">${s.identical} unchanged</span>
+    <span class="pill ${s.differs ? "warn" : ""}">${s.differs} differ</span>
+  </div>`;
+
+  for (const p of d.parts) {
+    const conflict = p.status === "differs";
+    html += `<div class="decide ${conflict ? "conflict" : ""}"><div class="dh">
+      <strong>${esc(p.name)}</strong>
+      <span class="pill ${p.status === "new" ? "ok" : conflict ? "warn" : ""}">${esc(p.status)}</span>
+      <span class="pill">${p.incoming_len} aa</span>
+      </div><p class="note">${esc(p.note)}</p>`;
+
+    if (conflict) {
+      html += `<p class="note mono">stored&nbsp;&nbsp; ${esc(p.existing_seq.slice(0, 64))}${p.existing_seq.length > 64 ? "…" : ""} <em>(${p.existing_len} aa)</em></p>
+               <p class="note mono">incoming ${esc(p.incoming_seq.slice(0, 64))}${p.incoming_seq.length > 64 ? "…" : ""} <em>(${p.incoming_len} aa)</em></p>
+        <div class="choices">
+          <label><input type="radio" name="d_${esc(p.name)}" value="keep" checked> Keep the stored one</label>
+          <label><input type="radio" name="d_${esc(p.name)}" value="override"> Override with the incoming one</label>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+  html += `<div class="row" style="margin-top:14px">
+    <button id="applyPartsBtn">Apply import</button></div><div id="applyOut"></div>`;
+  $("partsPreview").innerHTML = html;
+  $("applyPartsBtn").onclick = applyParts;
+}
+
+async function applyParts() {
+  const decisions = {};
+  document.querySelectorAll('input[type=radio][name^="d_"]:checked').forEach((r) => {
+    decisions[r.name.slice(2)] = r.value;
+  });
+  const btn = $("applyPartsBtn");
+  btn.disabled = true;
+  try {
+    const d = await postJSON("/api/parts/apply", { path: lastPartsPath, decisions });
+    $("applyOut").innerHTML = okBanner(
+      d.applied.map((a) => `${a.name}: ${a.outcome}`).join(" · "));
+    renderParts(d.parts);
+    await reloadPresets();   // part lengths feed the palette and the layout card
+  } catch (e) {
+    $("applyOut").innerHTML = banner(e.message);
+  } finally { btn.disabled = false; }
+}
+
+$("partsBtn").onclick = async () => {
+  const btn = $("partsBtn");
+  btn.disabled = true;
+  try {
+    lastPartsPath = $("partsPath").value;
+    renderPartsPreview(await postJSON("/api/parts/preview", { path: lastPartsPath }));
+  } catch (e) {
+    $("partsPreview").innerHTML = banner(e.message);
+  } finally { btn.disabled = false; }
+};
+
+function renderParts(rows) {
+  lastPartsRows = rows;
+  $("partCount").textContent = `${rows.length} stored`;
+  updateUtilBar();
+  if (!rows.length) {
+    $("partsOut").innerHTML = `<p class="empty">No parts stored yet.</p>`;
+    return;
+  }
+  let html = `<div class="tablewrap"><table><thead><tr>
+    <th>Name</th><th>Role</th><th>Subclass</th><th>Length</th>
+    </tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr><td class="mono"><strong>${esc(r.name)}</strong></td>
+      <td>${esc(r.role)}</td><td>${esc(r.subclass || "—")}</td>
+      <td class="num">${esc(r.length)} aa</td></tr>`;
+  }
+  $("partsOut").innerHTML = html + `</tbody></table></div>`;
+}
+
+/* ================= Utility panel ================= */
+let lastPartsRows = [];
+
+function selectUtilTab(id) {
+  document.querySelectorAll(".uptab").forEach(
+    (b) => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll(".util-pane").forEach((s) => { s.hidden = s.id !== id; });
+}
+/* `hidden` means `display: none`, which cannot be transitioned. So opening
+   clears it first, then adds `.open` on the next frame so the browser has a
+   starting state to animate from; closing reverses that and only reapplies
+   `hidden` once the transition has finished. */
+function openUtil(tab) {
+  const panel = $("utilPanel");
+  if (tab) selectUtilTab(tab);
+  panel.hidden = false;
+  requestAnimationFrame(() => panel.classList.add("open"));
+  $("utilBar").setAttribute("aria-expanded", "true");
+  document.body.classList.add("util-open");
+}
+
+function closeUtil() {
+  const panel = $("utilPanel");
+  if (panel.hidden) return;
+  panel.classList.remove("open");
+  $("utilBar").setAttribute("aria-expanded", "false");
+  document.body.classList.remove("util-open");
+
+  let settled = false;
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    panel.hidden = true;
+  };
+  panel.addEventListener("transitionend", (ev) => {
+    if (ev.target === panel) finish();
+  }, { once: true });
+  // transitionend never fires under prefers-reduced-motion, or if the panel is
+  // off-screen, so guarantee the hide either way.
+  setTimeout(finish, 360);
+}
+$("utilBar").onclick = () => openUtil();
+$("utilBar").onkeydown = (ev) => {
+  if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openUtil(); }
+};
+$("utilClose").onclick = closeUtil;
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !$("utilPanel").hidden) closeUtil();
+});
+document.querySelectorAll(".uptab").forEach(
+  (b) => { b.onclick = () => selectUtilTab(b.dataset.tab); });
+
+/* The banner carries the state of what lives inside it, so a missing part or
+   an empty parts table is visible without opening the panel. */
+function updateUtilBar() {
+  const n = lastPartsRows.length;
+  $("ubParts").textContent = n ? `${n} part${n === 1 ? "" : "s"}` : "no parts";
+  $("ubParts").className = "pill" + (n ? "" : " warn");
+
+  const active = presetData?.presets?.[activePreset];
+  const missing = active?.missing?.length || 0;
+  const total = Object.keys(presetData?.presets || {}).length;
+  $("ubPresets").textContent = missing
+    ? `${missing} missing part${missing > 1 ? "s" : ""}`
+    : `${total} preset${total === 1 ? "" : "s"}`;
+  $("ubPresets").className = "pill" + (missing ? " fail" : "");
+  $("utilBar").classList.toggle("alert", missing > 0 || n === 0);
+}
+
+/* ================= Card 1: antibody library ================= */
+function renderAntibodies(rows) {
+  $("abCount").textContent = `${rows.length} stored`;
+  if (!rows.length) {
+    $("abOut").innerHTML = `<p class="empty">Nothing stored yet — open Utilities and run the sequence sanity check.</p>`;
+    refreshSelection(); return;
+  }
+  let html = `<div class="tablewrap"><table><thead><tr>
+    <th class="pick"><input type="checkbox" id="pickAll" title="Select all"></th>
+    <th>ID</th><th>Light</th><th>VH</th><th>VL</th>
+    <th>Confidence</th><th>Trimmed</th><th>Updated</th><th></th>
+    </tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr>
+      <td class="pick"><input type="checkbox" data-pick="${esc(r.id)}" ${selected.has(r.id) ? "checked" : ""}></td>
+      <td class="mono"><strong>${esc(r.id)}</strong></td>
+      <td>${esc(r.light_subclass || "—")}</td>
+      <td class="mono"><span class="seq" title="${esc(r.vh_seq)}">${esc(r.vh_seq)}</span>
+          <span class="note">${esc(r.vh_len)} aa · FR4 ${esc(r.vh_fr4)}</span></td>
+      <td class="mono"><span class="seq" title="${esc(r.vl_seq)}">${esc(r.vl_seq)}</span>
+          <span class="note">${esc(r.vl_len)} aa · FR4 ${esc(r.vl_fr4)}</span></td>
+      <td>${esc(r.vh_confidence)} / ${esc(r.vl_confidence)}</td>
+      <td class="mono">${esc(r.vh_trim)} · ${esc(r.vl_trim)}</td>
+      <td class="note">${esc((r.updated_utc || "").replace("T", " ").replace("+00:00", "Z"))}</td>
+      <td><button class="ghost small" data-del="${esc(r.id)}">Remove</button></td></tr>`;
+    if (r.notes) {
+      html += `<tr><td colspan="9"><details class="sub"><summary>notes carried from typing</summary>
+        <ul>${r.notes.split("; ").map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details></td></tr>`;
+    }
+  }
+  $("abOut").innerHTML = html + `</tbody></table></div>`;
+
+  const present = new Set(rows.map((r) => r.id));
+  for (const id of [...selected]) if (!present.has(id)) selected.delete(id);
+
+  $("abOut").querySelectorAll("[data-pick]").forEach((box) => {
+    box.onchange = () => {
+      box.checked ? selected.add(box.dataset.pick) : selected.delete(box.dataset.pick);
+      refreshSelection();
+    };
+  });
+  const all = $("pickAll");
+  if (all) {
+    all.checked = rows.length > 0 && rows.every((r) => selected.has(r.id));
+    all.onchange = () => {
+      rows.forEach((r) => all.checked ? selected.add(r.id) : selected.delete(r.id));
+      renderAntibodies(rows);
+    };
+  }
+  $("abOut").querySelectorAll("[data-del]").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Remove ${b.dataset.del} from the library?`)) return;
+      try { renderAntibodies((await postJSON("/api/antibody/delete", { id: b.dataset.del })).library); }
+      catch (e) { $("abOut").innerHTML += banner(e.message); }
+    };
+  });
+  refreshSelection();
+}
+
+/* ================= Card 4: constructs library ================= */
+function renderConstructs(rows) {
+  $("conCount").textContent = `${rows.length} stored`;
+  $("conExport").hidden = rows.length === 0;
+  if (!rows.length) {
+    $("conOut").innerHTML = `<p class="empty">No constructs yet — build some in card 3.</p>`;
+    return;
+  }
+  let html = `<div class="tablewrap"><table><thead><tr>
+    <th class="pick"><input type="checkbox" id="pickAllC" title="Select all"></th>
+    <th>ID</th><th>Antibody</th><th>Preset</th><th>CL</th>
+    <th>Length</th><th>Sequence</th><th>Built</th><th></th>
+    </tr></thead><tbody>`;
+  for (const r of rows) {
+    html += `<tr>
+      <td class="pick"><input type="checkbox" data-pickc="${esc(r.id)}" ${selectedC.has(r.id) ? "checked" : ""}></td>
+      <td class="mono"><strong>${esc(r.id)}</strong></td>
+      <td class="mono">${esc(r.antibody_id)}</td>
+      <td>${esc(r.preset)}</td>
+      <td><span class="pill ok">${esc(r.cl_part)}</span> <span class="note">${esc(r.subclass)}</span></td>
+      <td class="num">${esc(r.residue_count)} aa${r.has_stop === "yes" ? " + stop" : ""}</td>
+      <td class="mono"><span class="seq" title="${esc(r.seq)}">${esc(r.seq)}</span></td>
+      <td class="note">${esc((r.updated_utc || "").replace("T", " ").replace("+00:00", "Z"))}</td>
+      <td><button class="ghost small" data-delc="${esc(r.id)}">Remove</button></td></tr>`;
+    let segs = [];
+    try { segs = JSON.parse(r.segments_json || "[]"); } catch {}
+    if (segs.length) {
+      html += `<tr><td colspan="9"><details class="sub"><summary>segment map</summary>
+        <ul>${segs.map((s) => `<li><span class="mono">${esc(s.label)}</span> — residues ${s.start}–${s.end} (${s.length} aa)</li>`).join("")}</ul>
+        ${r.notes ? `<p class="note warn">${esc(r.notes)}</p>` : ""}</details></td></tr>`;
+    }
+  }
+  $("conOut").innerHTML = html + `</tbody></table></div>`;
+
+  const present = new Set(rows.map((r) => r.id));
+  for (const id of [...selectedC]) if (!present.has(id)) selectedC.delete(id);
+
+  $("conOut").querySelectorAll("[data-pickc]").forEach((box) => {
+    box.onchange = () => {
+      box.checked ? selectedC.add(box.dataset.pickc) : selectedC.delete(box.dataset.pickc);
+    };
+  });
+  const all = $("pickAllC");
+  if (all) {
+    all.checked = rows.length > 0 && rows.every((r) => selectedC.has(r.id));
+    all.onchange = () => {
+      rows.forEach((r) => all.checked ? selectedC.add(r.id) : selectedC.delete(r.id));
+      renderConstructs(rows);
+    };
+  }
+  $("conOut").querySelectorAll("[data-delc]").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Remove ${b.dataset.delc} from the constructs library?`)) return;
+      try { renderConstructs((await postJSON("/api/construct/delete", { id: b.dataset.delc })).library); }
+      catch (e) { $("conOut").innerHTML += banner(e.message); }
+    };
+  });
+}
+
+$("exportBtn").onclick = async () => {
+  if (!selectedC.size) { $("exportOut").innerHTML = banner("No constructs ticked."); return; }
+  const btn = $("exportBtn");
+  btn.disabled = true;
+  try {
+    const d = await postJSON("/api/constructs/export",
+      { ids: [...selectedC], output: $("exportPath").value });
+    let msg = `Wrote ${d.written} construct(s) to ${d.output}`;
+    if (d.replaced) msg += ` — replaced ${d.replaced} record(s)`;
+    $("exportOut").innerHTML = okBanner(msg);
+  } catch (e) { $("exportOut").innerHTML = banner(e.message); }
+  finally { btn.disabled = false; }
+};
+
+/* ================= Utilities: preset builder ================= */
+let palette = [];
+let draftSlots = [];
+
+function slotKey(slot) { return slot.kind === "part" ? `part:${slot.part}` : slot.kind; }
+
+function slotLabel(slot) {
+  if (slot.kind === "part") return slot.part;
+  const found = palette.find((i) => i.kind === slot.kind);
+  return found ? found.label : slot.kind;
+}
+
+function renderPalette() {
+  const groups = {};
+  for (const item of palette) (groups[item.group] ||= []).push(item);
+  let html = "";
+  for (const [group, items] of Object.entries(groups)) {
+    html += `<div class="palgroup"><div class="lbl">${esc(group)}</div><div class="tags">`;
+    for (const item of items) {
+      html += `<div class="tag k-${esc(item.kind)}" draggable="true"
+        data-pal="${esc(slotKey(item))}" title="${esc(item.detail)}">
+        <span class="nm">${esc(item.label)}</span>
+        <span class="dt">${esc(item.detail)}</span></div>`;
+    }
+    html += `</div></div>`;
+  }
+  $("palette").innerHTML = html;
+
+  $("palette").querySelectorAll("[data-pal]").forEach((el) => {
+    el.addEventListener("dragstart", (ev) => {
+      const item = palette.find((i) => slotKey(i) === el.dataset.pal);
+      const slot = item.kind === "part"
+        ? { kind: "part", part: item.part } : { kind: item.kind };
+      ev.dataTransfer.setData("text/plain", JSON.stringify({ from: "palette", slot }));
+      ev.dataTransfer.effectAllowed = "copy";
+    });
+  });
+}
+
+function renderDraft() {
+  const zone = $("draftChain");
+  if (!draftSlots.length) {
+    zone.innerHTML = `<span class="ph">Drop components here to build a layout.</span>`;
+  } else {
+    let html = "";
+    draftSlots.forEach((slot, i) => {
+      if (i) html += `<span class="dz-arrow">→</span>`;
+      html += `<span class="chain-tag k-${esc(slot.kind)}" draggable="true" data-idx="${i}">
+        <button data-mv="${i}:-1" title="Move earlier">‹</button>
+        <span class="nm">${esc(slotLabel(slot))}</span>
+        <button data-mv="${i}:1" title="Move later">›</button>
+        <button class="x" data-rm="${i}" title="Remove">×</button></span>`;
+    });
+    zone.innerHTML = html;
+  }
+
+  zone.querySelectorAll("[data-rm]").forEach((b) => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      draftSlots.splice(+b.dataset.rm, 1);
+      renderDraft();
+    };
+  });
+  zone.querySelectorAll("[data-mv]").forEach((b) => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const [i, d] = b.dataset.mv.split(":").map(Number);
+      const j = i + d;
+      if (j < 0 || j >= draftSlots.length) return;
+      [draftSlots[i], draftSlots[j]] = [draftSlots[j], draftSlots[i]];
+      renderDraft();
+    };
+  });
+  zone.querySelectorAll("[data-idx]").forEach((el) => {
+    el.addEventListener("dragstart", (ev) => {
+      ev.dataTransfer.setData("text/plain",
+        JSON.stringify({ from: "chain", index: +el.dataset.idx }));
+      ev.dataTransfer.effectAllowed = "move";
+      el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => el.classList.remove("dragging"));
+  });
+
+  describeDraft();
+}
+
+/* Where a drop would land: nearest tag centre, before or after by pointer x.
+   Works with a wrapped chain, where a pure left-to-right scan would not. */
+function insertionIndex(x, y) {
+  const tags = [...$("draftChain").querySelectorAll("[data-idx]")];
+  if (!tags.length) return 0;
+  let best = 0, bestDist = Infinity, after = false;
+  tags.forEach((el, i) => {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < bestDist) { bestDist = d; best = i; after = x > cx; }
+  });
+  return best + (after ? 1 : 0);
+}
+
+function showMarker(idx) {
+  const zone = $("draftChain");
+  zone.querySelectorAll(".marker").forEach((m) => m.remove());
+  const marker = document.createElement("span");
+  marker.className = "marker";
+  const tags = [...zone.querySelectorAll("[data-idx]")];
+  if (idx >= tags.length) zone.appendChild(marker);
+  else zone.insertBefore(marker, tags[idx]);
+}
+
+(() => {
+  const zone = $("draftChain");
+  zone.addEventListener("dragover", (ev) => {
+    ev.preventDefault();
+    zone.classList.add("over");
+    showMarker(insertionIndex(ev.clientX, ev.clientY));
+  });
+  zone.addEventListener("dragleave", (ev) => {
+    if (ev.target === zone) {
+      zone.classList.remove("over");
+      zone.querySelectorAll(".marker").forEach((m) => m.remove());
+    }
+  });
+  zone.addEventListener("drop", (ev) => {
+    ev.preventDefault();
+    zone.classList.remove("over");
+    let payload;
+    try { payload = JSON.parse(ev.dataTransfer.getData("text/plain")); }
+    catch { renderDraft(); return; }
+    const idx = insertionIndex(ev.clientX, ev.clientY);
+    if (payload.from === "palette") {
+      draftSlots.splice(idx, 0, payload.slot);
+    } else if (payload.from === "chain") {
+      const [moved] = draftSlots.splice(payload.index, 1);
+      // Removing the dragged tag shifts everything after it left by one.
+      draftSlots.splice(idx > payload.index ? idx - 1 : idx, 0, moved);
+    }
+    renderDraft();
+  });
+})();
+
+async function describeDraft() {
+  if (!draftSlots.length) { $("draftProblems").innerHTML = ""; return; }
+  try {
+    const d = await postJSON("/api/presets/describe", { slots: draftSlots });
+    let out = d.problems.length
+      ? `<div class="banner">${d.problems.map(esc).join("<br>")}</div>`
+      : `<p class="note" style="margin-top:10px">${esc(
+          d.layout.map((s) => `${s.label} (${s.detail})`).join("  →  "))}</p>`;
+    out += missingBanner(d.missing, "This layout");
+    $("draftProblems").innerHTML = out;
+  } catch (e) { $("draftProblems").innerHTML = banner(e.message); }
+}
+
+$("clearDraftBtn").onclick = () => { draftSlots = []; renderDraft(); };
+$("loadBuiltinBtn").onclick = () => {
+  const b = presetData?.presets?.[presetData.default];
+  draftSlots = b ? JSON.parse(JSON.stringify(b.slots)) : [];
+  $("presetLabel").value = "";
+  renderDraft();
+};
+
+$("savePresetBtn").onclick = async () => {
+  const btn = $("savePresetBtn");
+  btn.disabled = true;
+  try {
+    const d = await postJSON("/api/presets/save", {
+      label: $("presetLabel").value,
+      description: $("presetDescIn").value,
+      slots: draftSlots,
+    });
+    $("savePresetOut").innerHTML = okBanner(`Preset "${d.key}" ${d.outcome}.`);
+    await reloadPresets();
+  } catch (e) { $("savePresetOut").innerHTML = banner(e.message); }
+  finally { btn.disabled = false; }
+};
+
+function renderPresetList() {
+  const entries = Object.entries(presetData.presets);
+  const saved = entries.filter(([, v]) => !v.builtin);
+  $("presetCount").textContent = `${saved.length} saved`;
+  let html = `<div class="tablewrap"><table><thead><tr>
+    <th>Preset</th><th>Components</th><th>Kind</th><th></th>
+    </tr></thead><tbody>`;
+  for (const [key, v] of entries) {
+    html += `<tr>
+      <td><strong>${esc(v.label)}</strong><span class="note mono">${esc(key)}</span>
+          ${v.description ? `<p class="note">${esc(v.description)}</p>` : ""}</td>
+      <td class="mono">${esc(v.layout.map((s) => s.label).join(" → "))}</td>
+      <td>${v.builtin ? '<span class="pill">built in</span>' : '<span class="pill ok">saved</span>'}
+          ${v.missing && v.missing.length
+            ? `<span class="pill fail" title="${esc(v.missing.map((m) => m.part).join(', '))}">missing ${v.missing.length} part${v.missing.length > 1 ? "s" : ""}</span>`
+            : ""}</td>
+      <td><button class="ghost small" data-edit="${esc(key)}">Edit a copy</button>
+          ${v.builtin ? "" : `<button class="ghost small" data-delp="${esc(key)}">Delete</button>`}</td>
+    </tr>`;
+  }
+  $("presetList").innerHTML = html + `</tbody></table></div>`;
+
+  $("presetList").querySelectorAll("[data-edit]").forEach((b) => {
+    b.onclick = () => {
+      const v = presetData.presets[b.dataset.edit];
+      draftSlots = JSON.parse(JSON.stringify(v.slots));
+      $("presetLabel").value = v.builtin ? `${v.label} copy` : v.label;
+      $("presetDescIn").value = v.description || "";
+      renderDraft();
+      $("draftChain").scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+  });
+  $("presetList").querySelectorAll("[data-delp]").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Delete preset ${b.dataset.delp}?`)) return;
+      try {
+        await postJSON("/api/presets/delete", { key: b.dataset.delp });
+        await reloadPresets();
+      } catch (e) { $("savePresetOut").innerHTML = banner(e.message); }
+    };
+  });
+}
+
+async function reloadPresets() {
+  presetData = await (await fetch("/api/presets")).json();
+  palette = presetData.palette || [];
+  if (!presetData.presets[activePreset]) activePreset = presetData.default;
+  renderPalette();
+  renderPresetButtons();
+  renderLayout();
+  renderPresetList();
+  updateUtilBar();
+}
+
+/* ================= Cards 2 & 3: layout, plan, build ================= */
+let presetData = null, activePreset = null;
+
+function refreshSelection() {
+  const n = selected.size;
+  $("selCount").textContent = n ? `${n} selected` : "none selected";
+  $("selCount").className = "pill" + (n ? " ok" : "");
+  const blocked = $("planBtn").dataset.blocked === "1";
+  $("planBtn").disabled = n === 0 || blocked;
+  $("planHint").textContent = blocked
+    ? "The selected preset is missing parts — see the warning above."
+    : n
+    ? `Will plan ${n} construct${n > 1 ? "s" : ""} from the stored tables.`
+    : "Select antibodies in card 1 first.";
+}
+
+function renderPresetButtons() {
+  // Name the shipped default on the builder button rather than hardcoding it.
+  const dflt = presetData.presets[presetData.default];
+  if (dflt) $("loadBuiltinBtn").textContent = `Start from ${dflt.label}`;
+
+  const row = $("presetRow");
+  row.innerHTML = "";
+  for (const [key, p] of Object.entries(presetData.presets)) {
+    const b = document.createElement("button");
+    b.className = "preset" + (key === activePreset ? " active" : "");
+    b.textContent = p.label;
+    b.onclick = () => { activePreset = key; renderPresetButtons(); renderLayout(); };
+    row.appendChild(b);
+  }
+}
+
+function missingBanner(missing, where) {
+  if (!missing || !missing.length) return "";
+  const list = missing.map((m) => `<strong>${esc(m.part)}</strong>` +
+    (m.suggestion ? ` — did you mean <strong>${esc(m.suggestion)}</strong>?` : "")).join("<br>");
+  return `<div class="banner"><strong>Missing parts.</strong> ${esc(where)}
+    needs ${missing.length === 1 ? "a part" : "parts"} the parts table does not
+    hold:<br>${list}<br>Open Utilities to import a parts FASTA containing
+    ${missing.length === 1 ? "it" : "them"}, or edit the layout there.</div>`;
+}
+
+function renderLayout() {
+  const p = presetData.presets[activePreset];
+  $("presetDesc").textContent = p.description;
+  let html = `<div class="chain"><span class="term">N</span>`;
+  p.layout.forEach((s, i) => {
+    if (i) html += `<span class="arrow">→</span>`;
+    const missing = s.detail === "not in the parts table";
+    html += `<span class="chip k-${esc(s.kind)}${missing ? " missing" : ""}">
+      <span class="nm">${esc(s.label)}</span><span class="dt">${esc(s.detail)}</span></span>`;
+  });
+  html += `<span class="arrow">→</span><span class="term">C</span></div>`;
+  const alert = presetData.parts_loaded
+    ? missingBanner(p.missing, `The "${p.label}" preset`)
+    : banner("The parts table is empty — open Utilities \u2192 Construct parts to import one.");
+  $("layoutViz").innerHTML = html + alert;
+  // A layout that cannot be completed must not reach the plan step.
+  const blocked = !presetData.parts_loaded || (p.missing && p.missing.length > 0);
+  $("planBtn").dataset.blocked = blocked ? "1" : "";
+  refreshSelection();
+}
+
+function renderPlan(d) {
+  $("planCount").textContent = `${d.buildable} of ${d.constructs.length} buildable`;
+  $("planCount").className = "pill " + (d.buildable === d.constructs.length ? "ok" : "warn");
+  let html = "";
+  for (const c of d.constructs) {
+    html += `<div class="plan ${c.ok ? "" : "bad"}"><div class="head">
+      <strong>${esc(c.id)}_BCR</strong>`;
+    html += c.ok
+      ? `<span class="cl-call">${esc(c.cl_part)} — ${esc(c.subclass)}</span>
+         <span class="pill">${esc(c.size_note)}</span>`
+      : `<span class="pill fail">cannot build</span>`;
+    html += `</div>`;
+    for (const e of c.errors)   html += `<p class="note fail">${esc(e)}</p>`;
+    for (const w of c.warnings) html += `<p class="note warn">${esc(w)}</p>`;
+    if (c.segments.length) {
+      html += `<div class="tablewrap"><table><thead><tr>
+        <th>#</th><th>Segment</th><th>Source</th><th>Residues</th><th>Length</th>
+        </tr></thead><tbody>`;
+      c.segments.forEach((s, i) => {
+        html += `<tr><td class="num">${i + 1}</td><td class="mono">${esc(s.label)}</td>
+          <td>${esc(s.kind === "part" ? "parts table"
+                  : s.kind === "light_constant" ? "parts table (resolved)" : "antibody library")}</td>
+          <td class="num mono">${s.start}–${s.end}</td><td class="num">${s.length}</td></tr>`;
+      });
+      html += `</tbody></table></div><p class="note mono" style="margin-top:8px">${esc(c.preview)}</p>`;
+    }
+    html += `</div>`;
+  }
+  $("planOut").innerHTML = html;
+  $("buildOut").innerHTML = "";
+  $("buildBtn").disabled = d.buildable === 0;
+  $("card5").hidden = false;
+  $("card5").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+$("planBtn").onclick = async () => {
+  $("planBtn").disabled = true;
+  try { renderPlan(await postJSON("/api/plan", { ids: [...selected], preset: activePreset })); }
+  catch (e) {
+    $("card5").hidden = false;
+    $("planOut").innerHTML = banner(e.message);
+    $("buildBtn").disabled = true;
+  } finally { refreshSelection(); }
+};
+
+$("buildBtn").onclick = async () => {
+  const btn = $("buildBtn");
+  btn.disabled = true;
+  try {
+    const d = await postJSON("/api/build",
+      { ids: [...selected], preset: activePreset, output: $("outPath").value });
+    let msg = `Wrote ${d.written} construct${d.written > 1 ? "s" : ""} to ${d.output}`;
+    if (d.replaced) msg += ` — replaced ${d.replaced} record(s) already in that file`;
+    if (d.skipped.length) msg += `. Skipped: ${d.skipped.join(", ")}`;
+    $("buildOut").innerHTML = okBanner(msg);
+    renderConstructs(d.library);
+  } catch (e) { $("buildOut").innerHTML = banner(e.message); }
+  finally { btn.disabled = false; }
+};
+
+/* ================= initial load ================= */
+(async () => {
+  try {
+    const d = await (await fetch("/api/library")).json();
+    renderAntibodies(d.antibodies);
+    renderParts(d.parts);
+    renderConstructs(d.constructs);
+  } catch { $("abOut").innerHTML = banner("Could not load the library."); }
+  try {
+    activePreset = null;
+    await reloadPresets();               // the shipped default becomes active
+    renderDraft();
+  } catch { $("layoutViz").innerHTML = banner("Could not load the layout presets."); }
+  refreshSelection();
+  requestAnimationFrame(() => $("utilBar").classList.add("ready"));
+})();
+</script>
+</body>
+</html>
