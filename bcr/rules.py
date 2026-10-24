@@ -41,6 +41,13 @@ CH1_IGG1_START = "ASTKGPSVFPLAP"  # section 5; nothing in a light chain resemble
 CL_KAPPA_START = "RTVAAPSVFIFPPS"
 CL_LAMBDA_START = "GQPKAAPSVTLFPPS"
 
+# IGHM CH1. NOT from the knowledge base -- that file covers typing and the
+# V/C boundary and says nothing about IgM. Taken from the IGHM constant region
+# shipped as an intrinsic part, and used only to recognise an IgM heavy
+# constant region by its opening. Verify against IMGT before relying on it for
+# anything more than a role label.
+CH1_IGM_START = "GSASAPTLFPLVSC"
+
 # Section 3c: the two CL openings share AAPSV and FPPS. What discriminates is
 # the stretch between them, plus lambda's N-terminal GQPK extension.
 CL_SHARED_MOTIF = "AAPSV"
@@ -73,10 +80,20 @@ LAMBDA_FR1_STARTS = ("QSVLTQ", "QSALTQ", "SYELTQ", "NFMLTQ", "QTVVTQ", "QPVLTQ",
 HEAVY_CDR3_LEADIN = re.compile(r"Y[YFH]C(?:AR|AK|TR)")
 
 # --- Section 1d: expected lengths ----------------------------------------
-# VH 98-128 linear residues (varies most with CDR-H3); VL 107-115. Widened
-# here so a genuinely unusual chain is reported rather than silently rejected;
-# anything outside the knowledge base's own range is flagged.
-HEAVY_LEN_RANGE = (95, 135)
+# VH 98-128 linear residues (varies most with CDR-H3); VL 107-115. _TYPICAL is
+# the knowledge base's own range and is what gets scored and warned about.
+# _RANGE is only the window of start positions find_v_start is allowed to
+# consider, and is deliberately wider: a start outside it is never scored at
+# all, so a cap set too tightly does not merely lower confidence -- it forces
+# a trim, silently amputating FR1 to make the domain fit.
+#
+# The heavy cap is 150 rather than the section's 128 because CDR-H3 length is
+# unbounded in practice. C05 (anti-influenza, 26-residue CDR-H3) is a 138 aa
+# VH that is already clean: at a cap of 135 its true N-terminus could not be
+# considered, and the best start inside the window cut 15 residues and lost
+# both the SG motif and the FR1 Cys. At 150 it types high-confidence untrimmed
+# and still carries the "outside the expected 98-128" warning.
+HEAVY_LEN_RANGE = (95, 150)
 HEAVY_LEN_TYPICAL = (98, 128)
 LIGHT_LEN_RANGE = (100, 125)
 LIGHT_LEN_TYPICAL = (107, 115)

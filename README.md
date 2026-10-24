@@ -42,20 +42,28 @@ the bottom that opens over the page when clicked:
 
 | Where | What it does |
 |---|---|
-| Utilities → Sequence sanity check | Type and trim a VH/VL FASTA, review, then approve |
-| Utilities → Construct parts | Import the parts FASTA, resolving any conflicts |
+| Utilities → Sequence sanity check | Drop or point at a VH/VL FASTA; type and trim it, review, then approve |
+| Utilities → Construct parts | Drop or point at the parts FASTA, resolving any conflicts |
 | Utilities → Assembly presets | Build layouts by dragging components into order |
-| 1 · Antibody library | Stored V domains; tick the ones to assemble |
+| 1 · Antibody library | Stored V domains; tick the ones to assemble, or edit them by hand |
 | 2 · Assembly layout | Pick a preset and see the order it will assemble in |
+| 2 · Express mode *(turn the card over)* | Each antibody's whole light and heavy chains, and the four express layouts |
 | 3 · Build plan | Which constant region each antibody gets; confirm to write |
-| 4 · Constructs library | What has been built, with its segment map |
+| 4 · Constructs library | What has been built, with its segment map; rename and annotate |
+
+Both input tabs accept a **`.fa` / `.fasta` file dragged onto them** — the
+file is copied to `data/uploads/` and processed from there — or a path to a
+file already on the machine. The sanity-check tab shows the header naming
+rule as a small diagram, if you would rather look than read.
 
 A typical first run: open Utilities, import your parts file, run the sequence
 check and approve the antibodies, close the panel, tick the antibodies in card
 1, review the plan in card 3, and build.
 
 Nothing is stored until you approve it, and the two import flows always show
-you what they are about to do first. The server binds `127.0.0.1` only.
+you what they are about to do first. **Trimming is offered, not applied:** any
+record the rules would shorten gets a trim-or-keep choice of its own, and
+approving leaves it alone until you answer. The server binds `127.0.0.1` only.
 
 ### Command line
 
@@ -70,14 +78,14 @@ python3 -m bcr.cli build sequences.fasta misc_2A.fasta
 ```
   OK    GL_VRC01_VH: heavy, 121 aa  [already clean]  (high confidence)
   OK    GL_VRC01_VL: light/kappa, 103 aa  [already clean]  (high confidence)
-  OK    Test_VH: heavy, 116 aa  [already clean]  (high confidence)
-  OK    Test_VL: light/kappa, 111 aa  [-1 C]  (high confidence)
+  OK    C05_VH: heavy, 138 aa  [already clean]  (high confidence)
+          warning: V domain is 138 aa, outside the usual 98-128 for heavy
 
-Assembling constructs: SignalHC | VL | IGKC / IGLC2 | LinkerSC | VH | CHandCTSC | Stop
+Assembling constructs: SignalHC | Light chain (VL+CL) | LinkerSC | Heavy chain IgG1 | Stop
 
   OK    GL_VRC01_BCR: 806 aa + stop (kappa)
-          layout: SignalHC(19) | VL:GL_VRC01(103) | IGKC(107) | LinkerSC(57) | VH:GL_VRC01(121) | CHandCTSC(399) | Stop(1)
-  OK    Test_BCR: 809 aa + stop (kappa)
+          layout: SignalHC(19) | LC:GL_VRC01(VL+IGKC)(210) | LinkerSC(57) | HC:GL_VRC01(VH+CHTMCTIgG1)(520) | Stop(1)
+  OK    C05_BCR: 827 aa + stop (kappa)
 ```
 
 Both commands exit non-zero if any record failed, so they can gate a pipeline.
@@ -98,7 +106,9 @@ EIVLTQSPATLSLSPGERATLSC...FGQGTKLEIK
 ```
 
 Sequences may carry a signal peptide, run on into the constant region, or
-both — those are trimmed off. A record with no `_VH`/`_VL` suffix is still
+both. Those can be trimmed off — but you are asked first, per record, and
+"keep as given" stores the sequence exactly as it came, with the row saying
+so. A record with no `_VH`/`_VL` suffix is still
 typed, with a warning. An antibody is stored only when **both** a clean VH and
 a clean VL are present.
 
@@ -129,18 +139,99 @@ constant region must begin at its own first residue (`RTVAAPSV`,
 Re-importing a parts file compares each part against what is stored and asks
 what to do about any that differ. The default is to keep what you have.
 
+## Editing the library
+
+Every table can be edited in place: **Edit** on a row, or **+ Add by hand** to
+type a record in from scratch.
+
+A hand-typed antibody is held to exactly the same rules as an imported one.
+Paste in a sequence — or a whole FASTA record, header and line breaks
+included — and on save it is typed, trimmed to its V domain, and κ/λ called,
+with the result reported back. A sequence that does not type as a VH/VL pair
+is refused with the reasons, rather than stored as a row nothing else can
+reason about. Parts go through the same checks the parts file does: a trailing
+`*` is dropped, an internal one is a truncation, and a light constant must
+still begin at its own first residue.
+
+Trimming a pasted sequence is likewise offered rather than done: if the rules
+would shorten it, nothing is saved until you pick trim or keep, with the
+residues in question shown.
+
+Renames follow through. Renaming an antibody repoints the constructs built
+from it; renaming a part rewrites the slots of every layout you have saved,
+and tells you if a **built-in** layout still asks for the old name. `IGKC` and
+`IGLC2` cannot be renamed or deleted, because a `light_constant` slot finds
+them by name — but a corrected sequence can be saved over them, which is
+usually what was wanted.
+
+A construct is assembled rather than typed in, so only its id and your notes
+are editable; the sequence and segment map it was built with are shown
+read-only. Rebuild to change them.
+
+## Express mode
+
+Card 2 turns over. The back shows, for every antibody in the library, the three
+whole chains it implies:
+
+| Column | What it is |
+|---|---|
+| `light_chain` | VL + `IGKC` or `IGLC2`, chosen from that antibody's own κ/λ call |
+| `heavy_chain_igg1` | VH + `CHTMCTIgG1` |
+| `heavy_chain_igm` | VH + `CHTMCTIgM` |
+
+They are kept in `antibodies.csv` as well, so the table is useful on its own.
+They are derived, not authored: the same function that fills them resolves a
+whole-chain slot at build time, so what you see is what gets built. If a row's
+columns are missing or disagree with its own V domains, the panel says so and
+offers to write them — it will not rewrite the CSV behind your back.
+
+Four layouts come with express mode:
+
+```
+Single chain BCR_IGG1   SignalHC → light chain → LinkerSC → heavy chain IgG1 → Stop
+Single chain BCR_IGM    SignalHC → light chain → LinkerSC → heavy chain IgM  → Stop
+2Alinked_IGG1           SignalHC → heavy chain IgG1 → Furin → F2A → SignalLC
+                                 → light chain → T2A → EGFP → Stop
+2Alinked_IGM            as above, with the IgM heavy chain
+```
+
+A whole-chain component is shorthand, not a different construct: it assembles
+exactly what naming VL, the light constant, VH and the CH part by hand would,
+and a test holds the two byte-identical. Both are draggable in the preset
+builder, so your own layouts can use either form.
+
+## Intrinsic parts
+
+Four parts ship with the package and cannot be edited, renamed or deleted:
+
+| Name | Length | Source |
+|---|---|---|
+| `IGKC` | 107 aa | §5 of the knowledge base |
+| `IGLC2` | 106 aa | §5 of the knowledge base |
+| `CHTMCTIgG1` | 399 aa | IgG1 CH1–CH3 + transmembrane and cytoplasmic tail |
+| `CHTMCTIgM` | 474 aa | IgM CH1–CH4 + transmembrane and cytoplasmic tail |
+
+Every layout resolves to them — by name for the heavy constants, per antibody
+for the light ones — so they are held outside the parts table entirely rather
+than stored as rows that merely refuse to change. Their four names are
+**reserved**: if a parts file you import uses one, you are offered a different
+name for that record instead, and the intrinsic sequence stays as it is. A
+record whose sequence is identical to the intrinsic one needs no rename, since
+it would override nothing.
+
 ## Layouts
 
-A layout is an ordered list of components, N- to C-terminus. The one that
-ships is **Single chain BCR**:
+A layout is an ordered list of components, N- to C-terminus. Four ship, all of
+them express layouts; **Single chain BCR_IGG1** is the default:
 
 ```
-SignalHC → VL → IGKC/IGLC2 → LinkerSC → VH → CHandCTSC → Stop
+SignalHC → light chain → LinkerSC → heavy chain IgG1 → Stop
 ```
 
-Components are of five kinds: a named `part` from the parts table, the
-antibody's own `vl` or `vh`, a `light_constant` that resolves per antibody,
-and the `stop` codon. Build your own in Utilities → Assembly presets by
+Components are of seven kinds: a named `part` from the parts table, the
+antibody's own `vl` or `vh`, a `light_constant` that resolves per antibody, a
+whole `light_chain` or `heavy_chain` (the shorthand express mode uses), and the
+`stop` codon. Build your own in Utilities → Assembly presets by
 dragging components into order; they are saved to `data/presets.json` and
 become selectable alongside the built-in one.
 
@@ -160,6 +251,14 @@ what ships, with no code change.
 | `data/parts.csv` | construct parts, with the role inferred from each sequence |
 | `data/constructs.csv` | assembled constructs and their segment maps |
 | `data/presets.json` | layouts you have built |
+| `data/uploads/` | FASTA files you dropped onto the page, kept exactly as given |
+
+`antibodies.csv` also holds the three whole-chain columns described under
+[Express mode](#express-mode).
+
+Each table has two note columns: `notes`, carrying whatever the rules warned
+about, and `user_notes`, which is yours. Editing a record touches only the
+second, so your own remarks and the rules' never overwrite each other.
 
 Plain CSV, so they open in a spreadsheet or feed any other tool. Writes are
 atomic — rendered to a temporary file and moved into place — so an interrupted
@@ -193,7 +292,7 @@ and every construct carries a warning saying so.
 python3 -m unittest discover -s tests -t .
 ```
 
-154 tests, no third-party test runner. They cover the counting rules against
+236 tests, no third-party test runner. They cover the counting rules against
 all functional human J segments, the κ/λ hybrid trap, boundary trimming,
 construct assembly, the CSV and JSON stores, and every web endpoint. Test
 inputs are pinned in `tests/fixtures/`, so editing your own working files will
@@ -203,6 +302,10 @@ not break the suite.
 
 - The λ path is exercised only by a synthetic fixture built from germline
   IGLV1 frameworks; no real λ sequence has been through it.
+- A VH is scored for start positions up to 150 residues, wider than the
+  knowledge base's 98–128, because CDR-H3 length is effectively unbounded —
+  C05, at 138 aa, was having 15 residues of FR1 cut off to fit a tighter
+  window. A length outside 98–128 is still reported as unusual.
 - N-terminal boundary scoring is calibrated on the germline FR1s listed in the
   knowledge base — three per chain, with only one IGLV among them. λ
   N-terminal calls are the least-tested part of typing.

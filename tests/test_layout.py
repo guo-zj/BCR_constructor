@@ -30,18 +30,40 @@ FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "example_input.fasta"
 
 
 class PresetTests(unittest.TestCase):
-    def test_single_chain_bcr_is_the_default_preset(self):
-        self.assertEqual(assemble.DEFAULT_PRESET, "single_chain_bcr")
+    def test_the_default_preset_is_an_express_one(self):
+        """The shipped default must be buildable from the library alone."""
+        default = assemble.PRESETS[assemble.DEFAULT_PRESET]
+        self.assertTrue(default["express"])
+        self.assertEqual(default["label"], "Single chain BCR_IGG1")
+
+    def test_four_express_layouts_ship(self):
+        express = {k: v for k, v in assemble.PRESETS.items() if v["express"]}
         self.assertEqual(
-            assemble.PRESETS["single_chain_bcr"]["label"], "Single chain BCR"
+            sorted(v["label"] for v in express.values()),
+            ["2Alinked_IGG1", "2Alinked_IGM",
+             "Single chain BCR_IGG1", "Single chain BCR_IGM"],
         )
+        # Each names one isotype, and the two isotypes are both covered.
+        isotypes = set()
+        for value in express.values():
+            found = [s["isotype"] for s in value["slots"] if s["kind"] == "heavy_chain"]
+            self.assertEqual(len(found), 1, value["label"])
+            isotypes.add(found[0])
+        self.assertEqual(isotypes, set(assemble.ISOTYPES))
 
     def test_preset_order_matches_the_agreed_layout(self):
-        slots = assemble.PRESETS["single_chain_bcr"]["slots"]
+        slots = assemble.PRESETS["single_chain_bcr_igg1"]["slots"]
         self.assertEqual(
             [assemble.slot_label(s) for s in slots],
-            ["SignalHC", "VL", "IGKC / IGLC2", "LinkerSC", "VH", "CHandCTSC", "Stop"],
+            ["SignalHC", "Light chain (VL+CL)", "LinkerSC",
+             "Heavy chain IgG1", "Stop"],
         )
+
+    def test_whole_chain_slot_labels_resolve_per_subclass(self):
+        slot = {"kind": "light_chain"}
+        self.assertEqual(assemble.slot_label(slot, "kappa"), "Light chain (VL+IGKC)")
+        self.assertEqual(assemble.slot_label(slot, "lambda"), "Light chain (VL+IGLC2)")
+        self.assertEqual(assemble.slot_label(slot, None), "Light chain (VL+CL)")
 
     def test_light_constant_slot_resolves_per_subclass(self):
         slot = {"kind": "light_constant"}
@@ -51,15 +73,17 @@ class PresetTests(unittest.TestCase):
 
     def test_describe_layout_reports_part_lengths(self):
         parts, _ = assemble.load_parts(PARTS)
-        layout = assemble.describe_layout("single_chain_bcr", parts)
+        layout = assemble.describe_layout("single_chain_bcr_igg1", parts)
         by_label = {s["label"]: s for s in layout}
         self.assertEqual(by_label["SignalHC"]["length"], 19)
-        # Length excludes the stop codon, as elsewhere.
-        self.assertEqual(by_label["CHandCTSC"]["length"], 399)
-        self.assertEqual(by_label["VL"]["detail"], "per antibody")
+        self.assertEqual(by_label["LinkerSC"]["length"], 57)
+        # A whole-chain slot names what it resolves to rather than a length,
+        # since the V domain comes from the antibody.
+        self.assertIn("per antibody", by_label["Light chain (VL+CL)"]["detail"])
+        self.assertIn("CHTMCTIgG1", by_label["Heavy chain IgG1"]["detail"])
 
     def test_describe_layout_flags_a_part_that_is_not_loaded(self):
-        layout = assemble.describe_layout("single_chain_bcr", {})
+        layout = assemble.describe_layout("single_chain_bcr_igg1", {})
         signal = next(s for s in layout if s["label"] == "SignalHC")
         self.assertEqual(signal["detail"], "not in the parts table")
 
@@ -92,9 +116,9 @@ class BuildFromLayoutTests(unittest.TestCase):
             "x", self.vh, self.vl, "kappa", self.parts
         )
         self.assertTrue(c.ok, c.errors)
-        cl = next(s for s in c.segments if s.kind == "light_constant")
-        self.assertEqual(cl.label, "IGKC")
-        self.assertEqual(cl.seq, self.parts["IGKC"])
+        lc = next(s for s in c.segments if s.kind == "light_chain")
+        self.assertIn("IGKC", lc.label)
+        self.assertEqual(lc.seq, self.vl + self.parts["IGKC"])
 
     def test_lambda_resolves_to_iglc2(self):
         # A lambda V domain ends L, which is what drives the choice.
@@ -103,9 +127,27 @@ class BuildFromLayoutTests(unittest.TestCase):
             "x", self.vh, lambda_vl, "lambda", self.parts
         )
         self.assertTrue(c.ok, c.errors)
-        cl = next(s for s in c.segments if s.kind == "light_constant")
-        self.assertEqual(cl.label, "IGLC2")
-        self.assertEqual(cl.seq, self.parts["IGLC2"])
+        lc = next(s for s in c.segments if s.kind == "light_chain")
+        self.assertIn("IGLC2", lc.label)
+        self.assertEqual(lc.seq, lambda_vl + self.parts["IGLC2"])
+
+    def test_the_isotype_picks_the_heavy_constant_region(self):
+        for isotype, part in assemble.CH_FOR_ISOTYPE.items():
+            with self.subTest(isotype=isotype):
+                c = assemble.build_from_layout(
+                    "x", self.vh, self.vl, "kappa", self.parts,
+                    slots=[{"kind": "heavy_chain", "isotype": isotype}],
+                )
+                self.assertTrue(c.ok, c.errors)
+                self.assertEqual(c.seq, self.vh + assemble.INTRINSIC_SEQS[part])
+
+    def test_a_heavy_chain_slot_without_an_isotype_is_refused(self):
+        c = assemble.build_from_layout(
+            "x", self.vh, self.vl, "kappa", self.parts,
+            slots=[{"kind": "heavy_chain", "isotype": "iga"}],
+        )
+        self.assertFalse(c.ok)
+        self.assertTrue(any("isotype" in e for e in c.errors), c.errors)
 
     def test_unknown_subclass_is_refused(self):
         c = assemble.build_from_layout("x", self.vh, self.vl, "", self.parts)
@@ -126,11 +168,10 @@ class BuildFromLayoutTests(unittest.TestCase):
         )
         kinds = [s.kind for s in c.segments]
         self.assertEqual(
-            kinds,
-            ["part", "vl", "light_constant", "part", "vh", "part", "stop"],
+            kinds, ["part", "light_chain", "part", "heavy_chain", "stop"]
         )
-        vl_seg = next(s for s in c.segments if s.kind == "vl")
-        self.assertEqual(vl_seg.source, "GL_VRC01")
+        lc_seg = next(s for s in c.segments if s.kind == "light_chain")
+        self.assertEqual(lc_seg.source, "GL_VRC01")
 
     def test_unknown_preset_is_refused(self):
         c = assemble.build_from_layout(
@@ -164,12 +205,14 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
 
     def test_presets_endpoint_exposes_the_default(self):
         d = self.client.get("/api/presets").get_json()
-        self.assertEqual(d["default"], "single_chain_bcr")
+        self.assertEqual(d["default"], assemble.DEFAULT_PRESET)
+        self.assertTrue(d["presets"][d["default"]]["express"])
         self.assertTrue(d["parts_loaded"])
-        labels = [s["label"] for s in d["presets"]["single_chain_bcr"]["layout"]]
+        labels = [s["label"] for s in d["presets"][d["default"]]["layout"]]
         self.assertEqual(
             labels,
-            ["SignalHC", "VL", "IGKC / IGLC2", "LinkerSC", "VH", "CHandCTSC", "Stop"],
+            ["SignalHC", "Light chain (VL+CL)", "LinkerSC",
+             "Heavy chain IgG1", "Stop"],
         )
 
     def test_plan_shows_the_resolved_light_constant(self):
@@ -183,8 +226,8 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
         self.assertIn("+ stop", c["size_note"])
         self.assertEqual(
             [s["label"] for s in c["segments"]],
-            ["SignalHC", "VL:GL_VRC01", "IGKC", "LinkerSC",
-             "VH:GL_VRC01", "CHandCTSC", "Stop"],
+            ["SignalHC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
+             "HC:GL_VRC01(VH+CHTMCTIgG1)", "Stop"],
         )
 
     def test_plan_writes_nothing(self):
@@ -237,7 +280,7 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         self.assertFalse(self.out.exists())
 
-    def test_plan_requires_parts_to_be_loaded(self):
+    def test_plan_names_the_parts_a_layout_is_missing(self):
         empty = tempfile.mkdtemp()
         try:
             app = create_app(empty)
@@ -246,7 +289,11 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
             client.post("/api/check", json={"path": str(VRC01)})
             res = client.post("/api/plan", json={"ids": ["GL_VRC01"]})
             self.assertEqual(res.status_code, 400)
-            self.assertIn("parts table is empty", res.get_json()["error"])
+            # The intrinsic parts are always present, so an empty table is
+            # not the complaint -- the parts the layout names by hand are.
+            error = res.get_json()["error"]
+            self.assertIn("not in the parts table", error)
+            self.assertIn("SignalHC", error)
         finally:
             shutil.rmtree(empty, ignore_errors=True)
 
@@ -310,7 +357,7 @@ class ConstructLibraryTests(unittest.TestCase):
         self.assertEqual(row["id"], "GL_VRC01_BCR")
         self.assertEqual(row["antibody_id"], "GL_VRC01")
         self.assertEqual(row["cl_part"], "IGKC")
-        self.assertEqual(row["preset"], "single_chain_bcr")
+        self.assertEqual(row["preset"], assemble.DEFAULT_PRESET)
         self.assertEqual(row["has_stop"], "yes")
         self.assertEqual(int(row["residue_count"]), 806)
 
@@ -333,8 +380,8 @@ class ConstructLibraryTests(unittest.TestCase):
         segments = json.loads(row["segments_json"])
         self.assertEqual(
             [s["label"] for s in segments],
-            ["SignalHC", "VL:GL_VRC01", "IGKC", "LinkerSC",
-             "VH:GL_VRC01", "CHandCTSC", "Stop"],
+            ["SignalHC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
+             "HC:GL_VRC01(VH+CHTMCTIgG1)", "Stop"],
         )
         # Coordinates must still address the stored sequence correctly.
         seq = row["seq"]

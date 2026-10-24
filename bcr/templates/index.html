@@ -65,6 +65,140 @@
   details.card > summary .t { flex: 1; }
   details.card > .body { padding-top: 14px; }
 
+  /* Drop zones. Never toggled with `hidden`, so no [hidden] guard needed. */
+  .drop {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    border: 1.5px dashed var(--border); border-radius: 10px;
+    padding: 15px 14px; margin-bottom: 12px; text-align: center;
+    background: var(--bg); color: var(--muted); font-size: 12.5px;
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease, color .15s ease;
+  }
+  .drop:hover, .drop:focus-visible { border-color: var(--accent); outline: none; }
+  .drop.over {
+    border-color: var(--accent); border-style: solid;
+    background: var(--ok-bg); color: var(--ok-fg);
+  }
+  .drop.busy { opacity: .6; cursor: progress; }
+  .drop-ico { font-size: 19px; line-height: 1; }
+  .drop-main { font-size: 14px; color: var(--text); }
+  .drop.over .drop-main { color: var(--ok-fg); }
+  button.linky {
+    background: none; border: none; padding: 0; font: inherit;
+    color: var(--accent); text-decoration: underline; cursor: pointer;
+  }
+  .dropstat { font-size: 12.5px; color: var(--muted); margin: -6px 0 12px; }
+  .dropstat.bad { color: var(--fail-fg); }
+  .dropstat code { word-break: break-all; }
+
+  /* The naming-rule cartoon. */
+  figure.naming {
+    margin: 0 0 16px; padding: 12px 12px 10px;
+    border: 1px solid var(--border); border-radius: 10px; background: var(--bg);
+  }
+  figure.naming svg { display: block; width: 100%; height: auto; max-width: 470px; margin: 0 auto; }
+  figure.naming figcaption {
+    margin: 6px 2px 0; font-size: 12.5px; color: var(--muted); text-align: center;
+  }
+  .nm-card { fill: var(--surface); stroke: var(--border); }
+  .nm-mono { font-family: var(--mono); font-size: 20px; font-weight: 600; }
+  .nm-gt { fill: var(--muted); }
+  .nm-name { fill: var(--accent); }
+  .nm-chain { fill: var(--ok-fg); }
+  .nm-seq { font-family: var(--mono); font-size: 9px; fill: var(--cut-fg); }
+  .nm-tag { font-family: system-ui, sans-serif; font-size: 7.5px; fill: var(--muted); letter-spacing: .08em; }
+  .nm-brace-a { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+  .nm-brace-b { fill: none; stroke: var(--ok-fg); stroke-width: 1.5; }
+  .nm-lab { font-family: system-ui, sans-serif; font-size: 11px; }
+  .nm-lab-a { fill: var(--accent); }
+  .nm-lab-b { fill: var(--ok-fg); }
+  .nm-ab { fill: none; stroke: var(--accent); stroke-width: 9; stroke-linecap: round; }
+  .nm-face { fill: var(--accent); }
+  .nm-eye { fill: var(--surface); }
+  .nm-smile { fill: none; stroke: var(--surface); stroke-width: 1.7; stroke-linecap: round; }
+  .nm-spark { fill: var(--warn-fg); }
+  .nm-mascot { animation: nm-bob 3.2s ease-in-out infinite; transform-origin: 427px 132px; }
+  @keyframes nm-bob {
+    0%, 100% { transform: rotate(-4deg); }
+    50%      { transform: rotate(4deg); }
+  }
+  @media (prefers-reduced-motion: reduce) { .nm-mascot { animation: none; } }
+
+  /* Card 2 has two faces. Both stay in the document so each can be measured;
+     the container's height is kept in sync with whichever one is showing, so
+     turning the card does not make the page jump. */
+  #card2 { perspective: 1800px; }
+  #card2 > h2 { margin-bottom: 0; }
+  #card2 > h2 #flipBtn { margin-left: auto; align-self: center; }
+  #card2 .faces {
+    position: relative; transform-style: preserve-3d;
+    /* Both faces are taken out of flow, so the height comes from JS. This
+       floor keeps the card from collapsing to nothing if that has not run. */
+    min-height: 240px;
+    transition: transform .55s cubic-bezier(.22,1,.36,1),
+                height .55s cubic-bezier(.22,1,.36,1);
+  }
+  #card2.flipped .faces { transform: rotateY(180deg); }
+  #card2 .face {
+    position: absolute; top: 0; left: 0; width: 100%;
+    padding-top: 14px;
+    backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  }
+  #card2 .face.back { transform: rotateY(180deg); }
+  #card2.flipped .face.front { pointer-events: none; }
+  #card2:not(.flipped) .face.back { pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) {
+    #card2 .faces { transition: none; }
+  }
+  .derivebar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    border: 1px solid var(--warn-br); background: var(--warn-bg);
+    color: var(--warn-fg); border-radius: 9px; padding: 10px 12px;
+    margin: 0 0 14px; font-size: 13px;
+  }
+  .derivebar.ok { border-color: var(--ok-br); background: var(--ok-bg); color: var(--ok-fg); }
+  td.chaincell .seq { max-width: 190px; }
+  .intrinsic { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+
+  /* A proposed modification, offered rather than applied. */
+  .choice {
+    border: 1px solid var(--warn-br); background: var(--warn-bg);
+    border-radius: 9px; padding: 11px 12px; margin: 10px 0 0;
+  }
+  .choice.settled { border-color: var(--ok-br); background: var(--ok-bg); }
+  .choice .ch-head { font-size: 13px; color: var(--warn-fg); margin-bottom: 8px; }
+  .choice.settled .ch-head { color: var(--ok-fg); }
+  .choice label {
+    display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px;
+    padding: 3px 0; cursor: pointer;
+  }
+  .choice label input { margin-top: 3px; flex: none; }
+  .choice label .sub { display: block; color: var(--muted); font-size: 12.5px; }
+
+  /* Inline record editor. One per table, above it, so a table re-render
+     cannot wipe a half-typed form out from under the user. */
+  .editor {
+    border: 1px solid var(--accent); border-left-width: 3px;
+    border-radius: 10px; padding: 14px; margin-bottom: 16px; background: var(--bg);
+  }
+  .editor .eh {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .editor .eh .note { font-size: 12.5px; color: var(--muted); }
+  .editor textarea {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+    border-radius: 8px; background: var(--surface); color: var(--text);
+    font-family: var(--mono); font-size: 12.5px; resize: vertical;
+  }
+  .editor textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .editor .ro {
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+    word-break: break-all;
+  }
+  ul.probs { margin: 8px 0 0; padding-left: 20px; font-size: 13px; }
+  ul.probs.bad { color: var(--fail-fg); }
+
   label.field { display: block; margin-bottom: 12px; }
   label.field span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
   input[type=text] {
@@ -157,6 +291,11 @@
   .chip.k-vl, .chip.k-vh { border-color: var(--accent); }
   .chip.k-vl .nm, .chip.k-vh .nm { color: var(--accent); }
   .chip.k-light_constant { border-style: dashed; }
+  /* A whole-chain chip carries two things at once, so it reads heavier. */
+  .chip.k-light_chain, .chip.k-heavy_chain {
+    border-color: var(--accent); border-width: 2px;
+  }
+  .chip.k-light_chain .nm, .chip.k-heavy_chain .nm { color: var(--accent); }
   .chip.missing { border-color: var(--fail-br); background: var(--fail-bg); }
   .chip.missing .dt { color: var(--fail-fg); }
 
@@ -302,23 +441,66 @@
   <h2><span class="num">1</span> Antibody library <span id="abCount" class="pill"></span></h2>
   <p class="hint">
     Clean V domains in <code>antibodies.csv</code>. Tick the ones to assemble.
+    Rows can be edited by hand &mdash; a hand-typed pair is held to the same
+    typing and trimming rules as an imported one.
   </p>
+  <div class="row" style="margin-bottom:12px">
+    <button class="ghost small" id="abAdd">+ Add an antibody by hand</button>
+  </div>
+  <div id="abEdit"></div>
   <div id="abOut"></div>
 </section>
 
 <!-- Card 2 --------------------------------------------------------------- -->
-<section class="card">
-  <h2><span class="num">2</span> Assembly layout <span id="selCount" class="pill"></span></h2>
-  <p class="hint">
-    Choose a preset to set the order of the assembled chain. Everything is
-    pulled from the stored tables — no FASTA files are read at this step.
-  </p>
-  <div class="row" id="presetRow"></div>
-  <p class="hint" id="presetDesc" style="margin:14px 0 0"></p>
-  <div id="layoutViz"></div>
-  <div class="row" style="margin-top:18px">
-    <button id="planBtn" disabled>Review build plan →</button>
-    <span class="check" id="planHint">Select antibodies in card 2 first.</span>
+<section class="card" id="card2">
+  <h2>
+    <span class="num">2</span>
+    <span id="card2Title">Assembly layout</span>
+    <span id="selCount" class="pill"></span>
+    <button class="ghost small" id="flipBtn" title="Turn the card over">
+      Express mode <span aria-hidden="true">&#8646;</span></button>
+  </h2>
+  <div class="faces" id="card2Faces">
+
+    <div class="face front" id="card2Front">
+      <p class="hint">
+        Choose a preset to set the order of the assembled chain. Everything is
+        pulled from the stored tables — no FASTA files are read at this step.
+      </p>
+      <div class="row" id="presetRow"></div>
+      <p class="hint" id="presetDesc" style="margin:14px 0 0"></p>
+      <div id="layoutViz"></div>
+      <div class="row" style="margin-top:18px">
+        <button id="planBtn" disabled>Review build plan →</button>
+        <span class="check" id="planHint">Select antibodies in card 1 first.</span>
+      </div>
+    </div>
+
+    <div class="face back" id="card2Back">
+      <p class="hint">
+        The whole chains each stored antibody implies, spliced with the
+        <strong>intrinsic</strong> constant regions — <code>IGKC</code> /
+        <code>IGLC2</code> chosen from the antibody's own κ/λ call, and
+        <code>CHTMCTIgG1</code> or <code>CHTMCTIgM</code> for the isotype.
+        Those four ship with the package and cannot be edited, so these
+        columns are reproducible from the library alone. They are kept in
+        <code>antibodies.csv</code> as well.
+      </p>
+      <div id="deriveBar"></div>
+      <div id="expressOut"></div>
+      <p class="hint" style="margin:18px 0 8px"><strong>Express layouts</strong>
+        — each places the whole light chain and the whole heavy chain of one
+        isotype, so nothing but the signal peptides, linker and 2A elements
+        comes from your parts table.</p>
+      <div class="row" id="expressPresetRow"></div>
+      <p class="hint" id="expressDesc" style="margin:14px 0 0"></p>
+      <div id="expressViz"></div>
+      <div class="row" style="margin-top:18px">
+        <button id="expressPlanBtn" disabled>Review build plan →</button>
+        <span class="check" id="expressHint"></span>
+      </div>
+    </div>
+
   </div>
 </section>
 
@@ -346,8 +528,10 @@
   <h2><span class="num">4</span> Constructs library <span id="conCount" class="pill"></span></h2>
   <p class="hint">
     Assembled constructs in <code>constructs.csv</code>, with the segment map
-    each was built from. Tick rows to write them out again.
+    each was built from. Tick rows to write them out again. A construct is
+    assembled rather than typed in, so only its id and your notes are editable.
   </p>
+  <div id="conEdit"></div>
   <div id="conOut"></div>
   <div id="conExport" hidden>
     <label class="field" style="margin-top:16px">
@@ -395,8 +579,57 @@
         <code>_VL</code> header, and shows where it would be trimmed. Nothing
         is stored until you approve it.
       </p>
+      <figure class="naming">
+        <svg viewBox="0 0 470 152" role="img"
+             aria-label="A FASTA header reading greater-than C R 9 1 1 4 underscore V H. CR9114 is the antibody name; the _VH suffix says it is the heavy chain. _VL would be the light chain.">
+          <!-- the record -->
+          <rect class="nm-card" x="16" y="10" width="250" height="66" rx="10"/>
+          <text class="nm-tag" x="30" y="26">FASTA HEADER</text>
+          <text class="nm-mono nm-gt"    x="30"  y="50" textLength="13" lengthAdjust="spacingAndGlyphs">&gt;</text>
+          <text class="nm-mono nm-name"  x="45"  y="50" textLength="78" lengthAdjust="spacingAndGlyphs">CR9114</text>
+          <text class="nm-mono nm-chain" x="123" y="50" textLength="39" lengthAdjust="spacingAndGlyphs">_VH</text>
+          <text class="nm-seq" x="30" y="66">QVQLVQSGAEVKKPGSSVKVSCKAS…WGQGTLVTVSS</text>
+
+          <!-- what each half means -->
+          <path class="nm-brace-a" d="M45 84 v5 h78 v-5"/>
+          <path class="nm-brace-a" d="M84 89 L64 106"/>
+          <text class="nm-lab nm-lab-a" x="64" y="121" text-anchor="middle">your antibody&#8217;s name</text>
+
+          <path class="nm-brace-b" d="M123 84 v12 h39 v-12"/>
+          <path class="nm-brace-b" d="M142.5 96 L215 112"/>
+          <text class="nm-lab nm-lab-b" x="292" y="116" text-anchor="middle">_VH = heavy &#183; _VL = light</text>
+
+          <!-- resident antibody, delighted to be named correctly -->
+          <g class="nm-mascot">
+            <path class="nm-ab" d="M427 86 L403 48"/>
+            <path class="nm-ab" d="M427 86 L451 48"/>
+            <path class="nm-ab" d="M427 86 L427 130"/>
+            <circle class="nm-face" cx="427" cy="88" r="16"/>
+            <circle class="nm-eye" cx="421.5" cy="85" r="2.1"/>
+            <circle class="nm-eye" cx="432.5" cy="85" r="2.1"/>
+            <path class="nm-smile" d="M421.5 92.5 q5.5 4.5 11 0"/>
+            <path class="nm-spark" d="M399 36 l1.8 4.6 4.6 1.8 -4.6 1.8 -1.8 4.6 -1.8 -4.6 -4.6 -1.8 4.6 -1.8 z"/>
+          </g>
+        </svg>
+        <figcaption>
+          One record per chain &mdash; name before the underscore, chain after it.
+          An antibody is stored once <em>both</em> its <code>_VH</code> and
+          <code>_VL</code> are present.
+        </figcaption>
+      </figure>
+
+      <div class="drop" id="seqDrop" tabindex="0" role="button"
+           aria-label="Drop a FASTA file here, or press Enter to choose one">
+        <span class="drop-ico" aria-hidden="true">&#11015;</span>
+        <span class="drop-main">Drop a <code>.fa</code> / <code>.fasta</code> file here</span>
+        <span>or <button type="button" class="linky" id="seqPick">choose a file</button>
+          &mdash; a copy is kept in <code>data/uploads/</code></span>
+      </div>
+      <input type="file" id="seqFile" accept=".fa,.fasta" hidden>
+      <div class="dropstat" id="seqDropStat"></div>
+
       <label class="field">
-        <span>Path to the VH / VL FASTA file</span>
+        <span>&hellip; or give a path to a VH / VL FASTA already on this machine</span>
         <input type="text" id="seqPath" value="{{ default_sequences }}" spellcheck="false">
       </label>
       <div class="row"><button id="processBtn">Process</button></div>
@@ -412,12 +645,35 @@
         already stored is compared against the incoming one before anything is
         replaced.
       </p>
+      <p class="hint">
+        Four parts are <strong>intrinsic</strong>: they ship with the package,
+        every layout resolves to them, and they cannot be edited, renamed or
+        deleted. Their names are reserved &mdash; <code>IGKC</code>,
+        <code>IGLC2</code>, <code>CHTMCTIgG1</code>, <code>CHTMCTIgM</code>
+        &mdash; so a record in your file using one is offered a different name
+        rather than overriding it.
+      </p>
+      <div id="shadowedOut"></div>
+      <div class="drop" id="partsDrop" tabindex="0" role="button"
+           aria-label="Drop a parts FASTA file here, or press Enter to choose one">
+        <span class="drop-ico" aria-hidden="true">&#11015;</span>
+        <span class="drop-main">Drop a <code>.fa</code> / <code>.fasta</code> file here</span>
+        <span>or <button type="button" class="linky" id="partsPick">choose a file</button>
+          &mdash; a copy is kept in <code>data/uploads/</code></span>
+      </div>
+      <input type="file" id="partsFile" accept=".fa,.fasta" hidden>
+      <div class="dropstat" id="partsDropStat"></div>
+
       <label class="field">
-        <span>Path to the parts FASTA file</span>
+        <span>&hellip; or give a path to a parts FASTA already on this machine</span>
         <input type="text" id="partsPath" value="{{ default_parts }}" spellcheck="false">
       </label>
       <div class="row"><button id="partsBtn">Preview import</button></div>
       <div id="partsPreview"></div>
+      <div class="row" style="margin:4px 0 12px">
+        <button class="ghost small" id="partAdd">+ Add a part by hand</button>
+      </div>
+      <div id="partEdit"></div>
       <div id="partsOut"></div>
     </section>
 
@@ -479,10 +735,93 @@ async function postJSON(url, body) {
   let data;
   try { data = await res.json(); }
   catch { throw new Error(`Server returned ${res.status}`); }
-  if (!res.ok || data.ok === false) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok || data.ok === false) {
+    const err = new Error(data.error || `Request failed (${res.status})`);
+    err.problems = data.problems || [];   // the rest of why, if the server said
+    throw err;
+  }
   return data;
 }
 const banner = (m) => `<div class="banner">${esc(m)}</div>`;
+
+/* ================= Drag-and-drop FASTA upload =================
+   An upload only gets the file onto disk: the server answers with a path,
+   which is then fed into the ordinary path-driven flows. Nothing here is a
+   shortcut past the two-phase check -- approve still re-reads from disk. */
+const DROP_SUFFIXES = [".fa", ".fasta"];
+
+async function uploadFasta(file) {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch("/api/upload", { method: "POST", body });
+  let data;
+  try { data = await res.json(); }
+  catch { throw new Error(`Server returned ${res.status}`); }
+  if (!res.ok || data.ok === false) throw new Error(data.error || `Upload failed (${res.status})`);
+  return data;
+}
+
+function wireDrop({ drop, file, pick, stat, path, then }) {
+  const zone = $(drop), input = $(file), out = $(stat), field = $(path);
+
+  const say = (msg, bad) => {
+    out.className = bad ? "dropstat bad" : "dropstat";
+    out.innerHTML = msg;
+  };
+
+  async function take(f) {
+    if (!f) return;
+    const name = f.name.toLowerCase();
+    if (!DROP_SUFFIXES.some((s) => name.endsWith(s))) {
+      say(`${esc(f.name)} is not a ${DROP_SUFFIXES.join(" or ")} file.`, true);
+      return;
+    }
+    zone.classList.add("busy");
+    say(`Uploading ${esc(f.name)}…`);
+    try {
+      const d = await uploadFasta(f);
+      field.value = d.path;
+      say(`Uploaded <strong>${esc(d.name)}</strong> (${d.bytes.toLocaleString()} bytes) → <code>${esc(d.path)}</code>`);
+      if (then) then();
+    } catch (e) {
+      say(e.message, true);
+    } finally {
+      zone.classList.remove("busy");
+      input.value = "";          // so the same file can be picked again
+    }
+  }
+
+  const stop = (ev) => { ev.preventDefault(); ev.stopPropagation(); };
+  zone.addEventListener("dragenter", (ev) => { stop(ev); zone.classList.add("over"); });
+  zone.addEventListener("dragover",  (ev) => { stop(ev); zone.classList.add("over"); });
+  zone.addEventListener("dragleave", (ev) => { stop(ev); zone.classList.remove("over"); });
+  zone.addEventListener("drop", (ev) => {
+    stop(ev);
+    zone.classList.remove("over");
+    const files = ev.dataTransfer && ev.dataTransfer.files;
+    if (!files || !files.length) { say("Nothing usable was dropped.", true); return; }
+    if (files.length > 1) say("More than one file was dropped; taking the first.");
+    take(files[0]);
+  });
+
+  zone.addEventListener("click", (ev) => {
+    if (ev.target.closest("button.linky")) return;   // the link does its own
+    input.click();
+  });
+  zone.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); input.click(); }
+  });
+  $(pick).onclick = (ev) => { ev.stopPropagation(); input.click(); };
+  input.onchange = () => take(input.files && input.files[0]);
+}
+
+/* A file dropped anywhere else would navigate away from the page. */
+for (const kind of ["dragover", "drop"]) {
+  window.addEventListener(kind, (ev) => {
+    const types = ev.dataTransfer && ev.dataTransfer.types;
+    if (types && Array.prototype.includes.call(types, "Files")) ev.preventDefault();
+  });
+}
 const okBanner = (m) => `<div class="ok-banner">${esc(m)}</div>`;
 
 /* ================= Utilities: check, then approve ================= */
@@ -521,6 +860,19 @@ function renderCheck(d) {
     for (const e of r.errors)   html += `<p class="note fail">${esc(e)}</p>`;
     for (const w of r.warnings) html += `<p class="note warn">${esc(w)}</p>`;
     html += trimViz(r.trim);
+    if (r.proposes_trim) {
+      html += `<div class="choice" data-choice="${esc(r.name)}">
+        <div class="ch-head">This would <strong>modify the sequence</strong>
+          (${esc(r.trim_note)}) on a ${esc(r.confidence)}-confidence boundary
+          call. Nothing is stored for ${esc(r.name)} until you choose.</div>
+        <label><input type="radio" name="trim-${esc(r.name)}" value="trim">
+          <span>Trim to the V domain as proposed
+            <span class="sub">store ${r.length} aa</span></span></label>
+        <label><input type="radio" name="trim-${esc(r.name)}" value="keep">
+          <span>Keep the sequence as given
+            <span class="sub">store all ${r.trim && r.trim.total ? r.trim.total : "?"} aa, unchanged</span></span></label>
+      </div>`;
+    }
     if (r.evidence.length) {
       html += `<details class="sub"><summary>evidence</summary><ul>` +
         r.evidence.map((x) => `<li>${esc(x)}</li>`).join("") + `</ul></details>`;
@@ -545,14 +897,61 @@ function renderCheck(d) {
       }
       html += `</div><p class="note">${esc(p.detail)}</p></div>`;
     }
+    if (s.awaiting) {
+      html += `<div class="row" style="margin-top:14px">
+        <span class="note">${s.awaiting} sequence${s.awaiting === 1 ? "" : "s"} would
+          be modified. Decide each above, or settle them all:</span>
+        <button class="ghost small" id="trimAll">Trim all as proposed</button>
+        <button class="ghost small" id="keepAll">Keep all as given</button>
+      </div>`;
+    }
     html += `<div class="row" style="margin-top:14px">
       <button id="approveBtn" ${s.ready ? "" : "disabled"}>Approve and add to library</button>
+      <span class="note" id="approveState"></span>
     </div>`;
   }
 
   $("checkOut").innerHTML = html + `<div id="approveOut"></div>`;
   const btn = $("approveBtn");
   if (btn) btn.onclick = approve;
+
+  const setAll = (value) => {
+    $("checkOut").querySelectorAll(`[data-choice] input[value="${value}"]`)
+      .forEach((radio) => { radio.checked = true; });
+    refreshChoices();
+  };
+  if ($("trimAll")) $("trimAll").onclick = () => setAll("trim");
+  if ($("keepAll")) $("keepAll").onclick = () => setAll("keep");
+  $("checkOut").querySelectorAll("[data-choice] input").forEach((radio) => {
+    radio.onchange = refreshChoices;
+  });
+  refreshChoices();
+}
+
+/* Which trims have been decided. A sequence is never shortened, or stored
+   unshortened, without an answer here. */
+function trimDecisions() {
+  const out = {};
+  $("checkOut").querySelectorAll("[data-choice]").forEach((box) => {
+    const picked = box.querySelector("input:checked");
+    out[box.dataset.choice] = picked ? picked.value : null;
+  });
+  return out;
+}
+
+function refreshChoices() {
+  const decisions = trimDecisions();
+  $("checkOut").querySelectorAll("[data-choice]").forEach((box) => {
+    box.classList.toggle("settled", !!decisions[box.dataset.choice]);
+  });
+  const open = Object.values(decisions).filter((v) => !v).length;
+  const state = $("approveState");
+  if (state) {
+    state.textContent = open
+      ? `${open} undecided — those records will be skipped`
+      : "";
+    state.className = open ? "note warn" : "note";
+  }
 }
 
 async function approve() {
@@ -562,15 +961,30 @@ async function approve() {
   const btn = $("approveBtn");
   btn.disabled = true;
   try {
-    const d = await postJSON("/api/approve", { path: lastCheckPath, ids });
-    const added = d.saved.map((s) => `${s.id} (${s.outcome})`).join(", ");
-    let msg = `Stored ${d.saved.length}: ${added}`;
-    if (d.skipped.length) msg += `. Skipped ${d.skipped.map((s) => s.id).join(", ")}`;
-    $("approveOut").innerHTML = okBanner(msg);
+    const decisions = {};
+    for (const [name, value] of Object.entries(trimDecisions())) {
+      if (value) decisions[name] = value;
+    }
+    const d = await postJSON("/api/approve",
+      { path: lastCheckPath, ids, decisions });
+    const added = d.saved.map((s) => `${s.id} (${s.outcome}${
+      s.kept && s.kept.length ? `, ${s.kept.join(" + ")} kept as given` : ""})`).join(", ");
+    let html = d.saved.length
+      ? okBanner(`Stored ${d.saved.length}: ${added}`)
+      : banner("Nothing was stored.");
+    if (d.skipped.length) {
+      html += `<p class="hint" style="margin:10px 0 0">Skipped:</p>`
+        + `<ul class="probs${d.skipped.some((s) => s.awaiting) ? " bad" : ""}">`
+        + d.skipped.map((s) => `<li><strong>${esc(s.id)}</strong> — ${esc(s.detail)}</li>`).join("")
+        + `</ul>`;
+    }
+    $("approveOut").innerHTML = html;
     renderAntibodies(d.library);
+    renderExpress(d.library, d.stale_derived);
   } catch (e) {
     $("approveOut").innerHTML = banner(e.message);
-    btn.disabled = false;
+  } finally {
+    btn.disabled = false;   // a skipped record can be decided and re-approved
   }
 }
 
@@ -593,7 +1007,35 @@ function renderPartsPreview(d) {
     <span class="pill ${s.new ? "ok" : ""}">${s.new} new</span>
     <span class="pill">${s.identical} unchanged</span>
     <span class="pill ${s.differs ? "warn" : ""}">${s.differs} differ</span>
+    ${s.reserved ? `<span class="pill fail">${s.reserved} reserved name${s.reserved === 1 ? "" : "s"}</span>` : ""}
   </div>`;
+
+  /* A record claiming an intrinsic name is offered a different one. It is
+     never imported under the reserved name and never silently dropped. */
+  for (const r of (d.reserved || [])) {
+    if (r.identical) {
+      html += `<div class="decide"><div class="dh">
+        <strong>${esc(r.name)}</strong>
+        <span class="pill">already intrinsic</span>
+        <span class="pill">${r.length} aa</span>
+        </div><p class="note">${esc(r.note)}</p></div>`;
+      continue;
+    }
+    html += `<div class="decide conflict" data-reserved="${esc(r.name)}"><div class="dh">
+      <strong>${esc(r.name)}</strong>
+      <span class="pill fail">reserved name</span>
+      <span class="pill">${r.length} aa</span>
+      </div>
+      <p class="note">${esc(r.note)} The intrinsic <code>${esc(r.name)}</code>
+        is ${r.intrinsic_length} aa and is what every layout resolves to; this
+        record is ${r.length} aa.</p>
+      <p class="note mono">incoming ${esc(r.seq.slice(0, 64))}${r.seq.length > 64 ? "…" : ""}</p>
+      <label class="field"><span>Import it under this name instead
+        (leave empty to skip it)</span>
+        <input type="text" class="renameIn" data-rename="${esc(r.name)}"
+               value="${esc(r.suggestion)}" spellcheck="false"></label>
+    </div>`;
+  }
 
   for (const p of d.parts) {
     const conflict = p.status === "differs";
@@ -624,13 +1066,19 @@ async function applyParts() {
   document.querySelectorAll('input[type=radio][name^="d_"]:checked').forEach((r) => {
     decisions[r.name.slice(2)] = r.value;
   });
+  const renames = {};
+  document.querySelectorAll("input[data-rename]").forEach((input) => {
+    const value = input.value.trim();
+    if (value) renames[input.dataset.rename] = value;
+  });
   const btn = $("applyPartsBtn");
   btn.disabled = true;
   try {
-    const d = await postJSON("/api/parts/apply", { path: lastPartsPath, decisions });
+    const d = await postJSON("/api/parts/apply",
+      { path: lastPartsPath, decisions, renames });
     $("applyOut").innerHTML = okBanner(
-      d.applied.map((a) => `${a.name}: ${a.outcome}`).join(" · "));
-    renderParts(d.parts);
+      d.applied.map((a) => `${a.name}: ${a.outcome}${a.detail ? ` (${a.detail})` : ""}`).join(" · "));
+    renderParts(d.parts, d.shadowed);
     await reloadPresets();   // part lengths feed the palette and the layout card
   } catch (e) {
     $("applyOut").innerHTML = banner(e.message);
@@ -648,23 +1096,95 @@ $("partsBtn").onclick = async () => {
   } finally { btn.disabled = false; }
 };
 
-function renderParts(rows) {
+wireDrop({
+  drop: "seqDrop", file: "seqFile", pick: "seqPick",
+  stat: "seqDropStat", path: "seqPath",
+  then: () => $("processBtn").click(),
+});
+wireDrop({
+  drop: "partsDrop", file: "partsFile", pick: "partsPick",
+  stat: "partsDropStat", path: "partsPath",
+  then: () => $("partsBtn").click(),
+});
+
+function renderParts(rows, shadowed) {
   lastPartsRows = rows;
-  $("partCount").textContent = `${rows.length} stored`;
+  if (shadowed !== undefined) lastShadowed = shadowed;
+  const own = rows.filter((r) => !r.builtin).length;
+  $("partCount").textContent = `${own} stored + ${rows.length - own} intrinsic`;
   updateUtilBar();
+  renderShadowed();
   if (!rows.length) {
     $("partsOut").innerHTML = `<p class="empty">No parts stored yet.</p>`;
     return;
   }
   let html = `<div class="tablewrap"><table><thead><tr>
-    <th>Name</th><th>Role</th><th>Subclass</th><th>Length</th>
+    <th>Name</th><th>Role</th><th>Subclass</th><th>Length</th><th></th>
     </tr></thead><tbody>`;
   for (const r of rows) {
-    html += `<tr><td class="mono"><strong>${esc(r.name)}</strong></td>
+    const fixed = !!r.builtin;
+    html += `<tr><td class="mono"><strong>${esc(r.name)}</strong>
+        ${fixed ? `<br><span class="pill intrinsic" title="Ships with the package; layouts resolve to it">intrinsic</span>` : ""}</td>
       <td>${esc(r.role)}</td><td>${esc(r.subclass || "—")}</td>
-      <td class="num">${esc(r.length)} aa</td></tr>`;
+      <td class="num">${esc(r.length)} aa</td>
+      <td>${fixed
+        ? `<span class="note">fixed</span>`
+        : `<button class="ghost small" data-editp="${esc(r.name)}">Edit</button>
+           <button class="ghost small" data-delp="${esc(r.name)}">Remove</button>`}</td></tr>`;
+    if (r.user_notes) {
+      html += `<tr><td colspan="5" class="note">${esc(r.user_notes)}</td></tr>`;
+    }
   }
   $("partsOut").innerHTML = html + `</tbody></table></div>`;
+
+  $("partsOut").querySelectorAll("[data-editp]").forEach((b) => {
+    b.onclick = () => { editing.part = b.dataset.editp; partEditor(); };
+  });
+  $("partsOut").querySelectorAll("[data-delp]").forEach((b) => {
+    b.onclick = async () => {
+      if (!confirm(`Remove the part ${b.dataset.delp}?`)) return;
+      try {
+        const d = await postJSON("/api/part/delete", { name: b.dataset.delp });
+        renderParts(d.parts, d.shadowed);
+        await reloadPresets();
+        $("partEdit").innerHTML = okBanner(`${b.dataset.delp} removed.`)
+          + noteList(d.notes || []);
+      } catch (e) { $("partEdit").innerHTML = errBlock(e); }
+    };
+  });
+}
+
+/* Rows stored before their names became intrinsic. Reported, not cleaned up:
+   deleting them is a write, so it is the user's to approve. */
+let lastShadowed = [];
+
+function renderShadowed() {
+  const box = $("shadowedOut");
+  if (!box) return;
+  const rows = lastShadowed.filter(Boolean);
+  if (!rows.length) { box.innerHTML = ""; return; }
+  const names = rows.map((r) => r.name);
+  const differ = rows.filter((r) => !r.same).map((r) => r.name);
+  box.innerHTML = `<div class="derivebar">
+    <span>${names.length} stored row${names.length === 1 ? "" : "s"}
+      (<code>${names.map(esc).join("</code>, <code>")}</code>)
+      ${names.length === 1 ? "has" : "have"} a name that is now intrinsic, so
+      ${names.length === 1 ? "it is" : "they are"} no longer used by anything.
+      ${differ.length
+        ? `<strong>${differ.map(esc).join(", ")}</strong> differ${differ.length === 1 ? "s" : ""} from the intrinsic sequence — copy it out before removing it if you still want it.`
+        : `The sequences are identical to the intrinsic ones.`}</span>
+    <button class="ghost small" id="unshadowBtn">Remove the stored copies</button>
+  </div>`;
+  $("unshadowBtn").onclick = async () => {
+    if (!confirm(`Remove ${names.length} stored part row(s) that intrinsic parts have replaced?`)) return;
+    const btn = $("unshadowBtn");
+    btn.disabled = true;
+    try {
+      const d = await postJSON("/api/parts/unshadow", { names });
+      renderParts(d.parts, d.shadowed);
+      await reloadPresets();
+    } catch (e) { box.innerHTML = errBlock(e); }
+  };
 }
 
 /* ================= Utility panel ================= */
@@ -736,8 +1256,408 @@ function updateUtilBar() {
   $("utilBar").classList.toggle("alert", missing > 0 || n === 0);
 }
 
+/* ================= Editing records by hand =================
+   Each table has one editor slot in its own element above the table, so a
+   table re-render -- a ticked checkbox, a refreshed library -- cannot destroy
+   a form in progress. `editing` holds which record each slot is open on:
+   null for closed, "" for a new record. Validation stays on the server: these
+   forms post the fields and render back whatever the rules say, so a
+   hand-typed record cannot enter the library on easier terms than an
+   imported one. */
+const editing = { ab: null, part: null, con: null };   // null = closed, "" = new
+
+function errBlock(e) {
+  let html = banner(e.message);
+  const rest = (e.problems || []).filter((p) => p !== e.message);
+  if (rest.length) {
+    html += `<ul class="probs bad">${rest.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`;
+  }
+  return html;
+}
+const noteList = (items) => items.length
+  ? `<ul class="probs">${items.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : "";
+
+function wireEditor(slot, which, onSave) {
+  $(`${slot}Cancel`).onclick = () => { editing[which] = null; renderEditor(which); };
+  $(`${slot}Save`).onclick = async () => {
+    const btn = $(`${slot}Save`);
+    btn.disabled = true;
+    $(`${slot}Out`).innerHTML = `<p class="empty">Checking…</p>`;
+    try {
+      await onSave();
+    } catch (e) {
+      $(`${slot}Out`).innerHTML = errBlock(e);
+    } finally { btn.disabled = false; }
+  };
+}
+
+function renderEditor(which) {
+  if (which === "ab") return abEditor();
+  if (which === "part") return partEditor();
+  if (which === "con") return conEditor();
+}
+
+/* --- antibodies: id, both sequences, your own notes --- */
+function abEditor() {
+  const slot = $("abEdit");
+  if (editing.ab === null) { slot.innerHTML = ""; return; }
+  const isNew = editing.ab === "";
+  const r = isNew ? {} : (lastAbRows.find((x) => x.id === editing.ab) || {});
+  slot.innerHTML = `<div class="editor">
+    <div class="eh">
+      <strong>${isNew ? "New antibody" : `Editing ${esc(editing.ab)}`}</strong>
+      <span class="note">Both sequences are typed and trimmed to the V domain
+        on save, by the same rules as an imported FASTA. A whole FASTA record
+        can be pasted in; the header and line breaks are ignored.</span>
+    </div>
+    <label class="field"><span>ID — the antibody name, without the <code>_VH</code> / <code>_VL</code> suffix</span>
+      <input type="text" id="abEditId" value="${esc(r.id || "")}" spellcheck="false"></label>
+    <label class="field"><span>VH sequence</span>
+      <textarea id="abEditVh" rows="3" spellcheck="false">${esc(r.vh_seq || "")}</textarea></label>
+    <label class="field"><span>VL sequence</span>
+      <textarea id="abEditVl" rows="3" spellcheck="false">${esc(r.vl_seq || "")}</textarea></label>
+    <label class="field"><span>Your notes — kept apart from the warnings typing produces</span>
+      <input type="text" id="abEditNotes" value="${esc(r.user_notes || "")}" spellcheck="false"></label>
+    <div class="row"><button id="abEditSave">Save</button>
+      <button class="ghost" id="abEditCancel">Cancel</button></div>
+    <div id="abEditOut"></div></div>`;
+
+  const chosen = {};   // chain -> "trim" | "keep", once the user has said
+  const submit = async () => {
+    const d = await postJSON("/api/antibody/save", {
+      old_id: isNew ? "" : editing.ab,
+      id: $("abEditId").value,
+      vh_seq: $("abEditVh").value,
+      vl_seq: $("abEditVl").value,
+      user_notes: $("abEditNotes").value,
+      vh_decision: chosen.VH || "",
+      vl_decision: chosen.VL || "",
+    });
+    if (d.stored === false) { askAboutTrim(d.needs_decision, chosen, submit); return; }
+    editing.ab = null;
+    renderAntibodies(d.library);
+    renderExpress(d.library, d.stale_derived);
+    renderConstructs(d.constructs);
+    slot.innerHTML = okBanner(`${d.id} ${d.outcome}.`)
+      + noteList([...(d.notes || []), ...(d.warnings || [])]);
+  };
+  wireEditor("abEdit", "ab", submit);
+  $("abEditId").focus();
+}
+
+/* Nothing was written: the rules want to shorten a sequence and that is the
+   user's call, not ours. Offer it, and only resubmit once they have chosen. */
+function askAboutTrim(pending, chosen, resubmit) {
+  const out = $("abEditOut");
+  out.innerHTML = banner(
+    "Saved nothing yet — this would modify a sequence. Choose what to store:"
+  ) + pending.map((p) => `<div class="choice" data-trim="${esc(p.chain)}">
+      <div class="ch-head">${esc(p.chain)}: the rules would remove
+        ${esc(p.note)} on a ${esc(p.confidence)}-confidence boundary call.</div>
+      ${p.n_seq ? `<p class="ro">N-terminus: <span class="cut">${esc(p.n_seq)}</span></p>` : ""}
+      ${p.c_seq ? `<p class="ro">C-terminus: <span class="cut">${esc(p.c_seq)}</span></p>` : ""}
+      <label><input type="radio" name="d-${esc(p.chain)}" value="trim">
+        <span>Trim to the V domain<span class="sub">store ${p.trimmed_to} aa</span></span></label>
+      <label><input type="radio" name="d-${esc(p.chain)}" value="keep">
+        <span>Keep it as given<span class="sub">store all ${p.as_given} aa, unchanged</span></span></label>
+    </div>`).join("")
+    + `<div class="row" style="margin-top:12px">
+        <button id="abTrimGo" disabled>Save with these choices</button></div>`;
+
+  const go = $("abTrimGo");
+  const check = () => {
+    out.querySelectorAll("[data-trim]").forEach((box) => {
+      const picked = box.querySelector("input:checked");
+      if (picked) chosen[box.dataset.trim] = picked.value;
+      box.classList.toggle("settled", !!picked);
+    });
+    go.disabled = pending.some((p) => !chosen[p.chain]);
+  };
+  out.querySelectorAll("[data-trim] input").forEach((r) => { r.onchange = check; });
+  go.onclick = async () => {
+    go.disabled = true;
+    out.innerHTML = `<p class="empty">Saving…</p>`;
+    try { await resubmit(); }
+    catch (e) { out.innerHTML = errBlock(e); }
+  };
+}
+
+/* --- parts: name and sequence; role is inferred, never typed in --- */
+function partEditor() {
+  const slot = $("partEdit");
+  if (editing.part === null) { slot.innerHTML = ""; return; }
+  const isNew = editing.part === "";
+  const r = isNew ? {} : (lastPartsRows.find((x) => x.name === editing.part) || {});
+  slot.innerHTML = `<div class="editor">
+    <div class="eh">
+      <strong>${isNew ? "New part" : `Editing ${esc(editing.part)}`}</strong>
+      <span class="note">Stored as residues only — a trailing <code>*</code> is
+        dropped and one stop codon is appended at build time instead. The role
+        is inferred from the sequence, not from the name. Renaming a part
+        follows through into your saved layouts.</span>
+    </div>
+    <label class="field"><span>Name — this becomes the FASTA header and the name a layout slot asks for</span>
+      <input type="text" id="partEditName" value="${esc(r.name || "")}" spellcheck="false"></label>
+    <label class="field"><span>Sequence</span>
+      <textarea id="partEditSeq" rows="4" spellcheck="false">${esc(r.seq || "")}</textarea></label>
+    <label class="field"><span>Your notes</span>
+      <input type="text" id="partEditNotes" value="${esc(r.user_notes || "")}" spellcheck="false"></label>
+    <div class="row"><button id="partEditSave">Save</button>
+      <button class="ghost" id="partEditCancel">Cancel</button></div>
+    <div id="partEditOut"></div></div>`;
+
+  wireEditor("partEdit", "part", async () => {
+    const d = await postJSON("/api/part/save", {
+      old_name: isNew ? "" : editing.part,
+      name: $("partEditName").value,
+      seq: $("partEditSeq").value,
+      user_notes: $("partEditNotes").value,
+    });
+    editing.part = null;
+    renderParts(d.parts, d.shadowed);
+    await reloadPresets();    // the palette and any missing-part alert
+    slot.innerHTML = okBanner(
+      `${d.name} ${d.outcome} — ${d.length} aa, role ${d.role}.`
+    ) + noteList(d.notes || []);
+  });
+  $("partEditName").focus();
+}
+
+/* --- constructs: id and notes only; the sequence is derived --- */
+function conEditor() {
+  const slot = $("conEdit");
+  if (editing.con === null) { slot.innerHTML = ""; return; }
+  const r = lastConRows.find((x) => x.id === editing.con) || {};
+  slot.innerHTML = `<div class="editor">
+    <div class="eh"><strong>Editing ${esc(editing.con)}</strong>
+      <span class="note">Built from ${esc(r.antibody_id || "?")} with
+        ${esc(r.preset || "?")}. The sequence and segment map come from that
+        build, so they are shown rather than edited — rebuild to change them.</span>
+    </div>
+    <label class="field"><span>ID</span>
+      <input type="text" id="conEditId" value="${esc(r.id || "")}" spellcheck="false"></label>
+    <label class="field"><span>Your notes</span>
+      <input type="text" id="conEditNotes" value="${esc(r.user_notes || "")}" spellcheck="false"></label>
+    <p class="ro">${esc(r.layout || "")}</p>
+    <div class="row"><button id="conEditSave">Save</button>
+      <button class="ghost" id="conEditCancel">Cancel</button></div>
+    <div id="conEditOut"></div></div>`;
+
+  wireEditor("conEdit", "con", async () => {
+    const d = await postJSON("/api/construct/save", {
+      old_id: editing.con,
+      id: $("conEditId").value,
+      user_notes: $("conEditNotes").value,
+    });
+    editing.con = null;
+    renderConstructs(d.library);
+    slot.innerHTML = okBanner(`Saved as ${d.id}.`);
+  });
+  $("conEditId").focus();
+}
+
+$("abAdd").onclick = () => { editing.ab = ""; abEditor(); };
+$("partAdd").onclick = () => { editing.part = ""; partEditor(); };
+
+
+/* ================= Card 2, back face: express mode =================
+   The whole chains each antibody implies, and the four layouts that place
+   them. The derived columns are recomputed from vh_seq / vl_seq, so they can
+   never be a stale source of truth; the same function fills antibodies.csv
+   and resolves a light_chain / heavy_chain slot at build time. */
+let expressRows = [], expressStale = [], expressIsotypes = [];
+
+function renderExpress(rows, stale, isotypes) {
+  if (rows !== undefined) expressRows = rows;
+  if (stale !== undefined) expressStale = stale;
+  if (isotypes !== undefined) expressIsotypes = isotypes;
+
+  const bar = $("deriveBar");
+  if (!expressRows.length) {
+    bar.innerHTML = "";
+  } else if (expressStale.length) {
+    bar.innerHTML = `<div class="derivebar">
+      <span>${expressStale.length} row${expressStale.length === 1 ? "" : "s"}
+        in <code>antibodies.csv</code> ${expressStale.length === 1 ? "has" : "have"}
+        no stored whole-chain columns, or stored ones that no longer match.
+        The table below is computed live either way; writing them to the CSV
+        rewrites the file, so it is offered rather than done.</span>
+      <button class="ghost small" id="deriveBtn">Write the columns now</button>
+    </div>`;
+    $("deriveBtn").onclick = async () => {
+      const btn = $("deriveBtn");
+      btn.disabled = true;
+      try {
+        const d = await postJSON("/api/library/derive", {});
+        renderAntibodies(d.library);
+        renderExpress(d.library, d.stale_derived);
+        bar.innerHTML = `<div class="derivebar ok">Wrote the whole-chain
+          columns for ${d.changed.length} row${d.changed.length === 1 ? "" : "s"}.</div>`;
+        syncFaces();
+      } catch (e) { bar.innerHTML = banner(e.message); btn.disabled = false; }
+    };
+  } else {
+    bar.innerHTML = `<div class="derivebar ok">The whole-chain columns in
+      <code>antibodies.csv</code> are up to date.</div>`;
+  }
+
+  if (!expressRows.length) {
+    $("expressOut").innerHTML = `<p class="empty">Nothing stored yet — add antibodies in card 1.</p>`;
+    refreshExpress();
+    return;
+  }
+
+  const chain = (seq, label) => seq
+    ? `<td class="mono chaincell"><span class="seq" title="${esc(seq)}">${esc(seq)}</span>
+        <span class="note">${seq.length} aa</span></td>`
+    : `<td class="note warn">${esc(label)}</td>`;
+
+  let html = `<div class="tablewrap"><table><thead><tr>
+    <th class="pick"><input type="checkbox" id="pickAllX" title="Select all"></th>
+    <th>ID</th><th>Light chain<br><span class="note">VL + IGKC / IGLC2</span></th>
+    <th>Heavy chain IgG1<br><span class="note">VH + CHTMCTIgG1</span></th>
+    <th>Heavy chain IgM<br><span class="note">VH + CHTMCTIgM</span></th>
+    </tr></thead><tbody>`;
+  for (const r of expressRows) {
+    const cl = r.light_subclass
+      ? `<span class="pill ok">${esc(r.light_subclass)}</span>` : `<span class="pill warn">κ/λ unknown</span>`;
+    html += `<tr>
+      <td class="pick"><input type="checkbox" data-pickx="${esc(r.id)}" ${selected.has(r.id) ? "checked" : ""}></td>
+      <td class="mono"><strong>${esc(r.id)}</strong><br>${cl}</td>
+      ${chain(r.light_chain, "no κ/λ call, so no constant region can be chosen")}
+      ${chain(r.heavy_chain_igg1, "no VH")}
+      ${chain(r.heavy_chain_igm, "no VH")}
+    </tr>`;
+  }
+  $("expressOut").innerHTML = html + `</tbody></table></div>`;
+
+  $("expressOut").querySelectorAll("[data-pickx]").forEach((box) => {
+    box.onchange = () => {
+      box.checked ? selected.add(box.dataset.pickx) : selected.delete(box.dataset.pickx);
+      renderAntibodies(lastAbRows);     // keep card 1's ticks in step
+      refreshExpress();
+    };
+  });
+  const all = $("pickAllX");
+  if (all) {
+    all.checked = expressRows.length > 0 && expressRows.every((r) => selected.has(r.id));
+    all.onchange = () => {
+      expressRows.forEach((r) => all.checked ? selected.add(r.id) : selected.delete(r.id));
+      renderAntibodies(lastAbRows);
+      renderExpress();
+    };
+  }
+  refreshExpress();
+}
+
+function renderExpressPresets() {
+  if (!presetData) return;
+  const row = $("expressPresetRow");
+  row.innerHTML = "";
+  const express = Object.entries(presetData.presets).filter(([, p]) => p.express);
+  if (!express.length) {
+    row.innerHTML = `<span class="note">No express layouts are installed.</span>`;
+    return;
+  }
+  for (const [key, p] of express) {
+    const b = document.createElement("button");
+    b.className = "preset" + (key === activePreset ? " active" : "");
+    b.textContent = p.label;
+    b.onclick = () => {
+      activePreset = key;
+      renderPresetButtons(); renderLayout();      // the front face shares it
+      renderExpressPresets(); renderExpressLayout();
+    };
+    row.appendChild(b);
+  }
+}
+
+function renderExpressLayout() {
+  if (!presetData) return;
+  const p = presetData.presets[activePreset];
+  if (!p || !p.express) {
+    $("expressDesc").textContent = "";
+    $("expressViz").innerHTML = `<p class="note">Pick one of the express layouts above.</p>`;
+    refreshExpress();
+    return;
+  }
+  $("expressDesc").textContent = p.description;
+  let html = `<div class="chain"><span class="term">N</span>`;
+  p.layout.forEach((s, i) => {
+    if (i) html += `<span class="arrow">→</span>`;
+    const missing = s.detail === "not in the parts table";
+    html += `<span class="chip k-${esc(s.kind)}${missing ? " missing" : ""}">
+      <span class="nm">${esc(s.label)}</span><span class="dt">${esc(s.detail)}</span></span>`;
+  });
+  html += `<span class="arrow">→</span><span class="term">C</span></div>`;
+  $("expressViz").innerHTML = html + missingBanner(p.missing, `The "${p.label}" layout`);
+  refreshExpress();
+}
+
+/* Card 1 and the express table tick the same set, so one updates the other's
+   boxes rather than re-rendering it and losing the user's scroll position. */
+function syncExpressTicks() {
+  document.querySelectorAll("#expressOut [data-pickx]").forEach((box) => {
+    box.checked = selected.has(box.dataset.pickx);
+  });
+  const all = $("pickAllX");
+  if (all) {
+    all.checked = expressRows.length > 0 && expressRows.every((r) => selected.has(r.id));
+  }
+  refreshExpress();
+}
+
+function refreshExpress() {
+  const n = selected.size;
+  const p = presetData && presetData.presets[activePreset];
+  const blocked = !p || !p.express || (p.missing && p.missing.length > 0);
+  $("expressPlanBtn").disabled = n === 0 || blocked;
+  $("expressHint").textContent = !p || !p.express
+    ? "Pick an express layout above."
+    : blocked
+    ? "That layout is missing parts — see the warning above."
+    : n
+    ? `Will plan ${n} construct${n > 1 ? "s" : ""} with ${p.label}.`
+    : "Tick the antibodies to build.";
+  syncFaces();
+}
+
+$("expressPlanBtn").onclick = () => $("planBtn").click();
+
+/* Keep the card's height matched to the face on show, so turning it over
+   does not make the page jump, and so a re-render of either face is picked
+   up without a manual call at every site. */
+function syncFaces() {
+  const faces = $("card2Faces");
+  const showing = $("card2").classList.contains("flipped") ? $("card2Back") : $("card2Front");
+  faces.style.height = `${showing.offsetHeight}px`;
+}
+
+function flipCard2(toBack) {
+  const card = $("card2");
+  card.classList.toggle("flipped", toBack);
+  $("card2Title").textContent = toBack ? "Express mode" : "Assembly layout";
+  $("flipBtn").innerHTML = toBack
+    ? `Layout mode <span aria-hidden="true">&#8646;</span>`
+    : `Express mode <span aria-hidden="true">&#8646;</span>`;
+  $("flipBtn").setAttribute("aria-pressed", toBack ? "true" : "false");
+  syncFaces();
+}
+
+$("flipBtn").onclick = () => flipCard2(!$("card2").classList.contains("flipped"));
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(() => syncFaces());
+  ro.observe($("card2Front"));
+  ro.observe($("card2Back"));
+}
+window.addEventListener("resize", syncFaces);
+
 /* ================= Card 1: antibody library ================= */
+let lastAbRows = [];
+let lastConRows = [];
+
 function renderAntibodies(rows) {
+  lastAbRows = rows;
   $("abCount").textContent = `${rows.length} stored`;
   if (!rows.length) {
     $("abOut").innerHTML = `<p class="empty">Nothing stored yet — open Utilities and run the sequence sanity check.</p>`;
@@ -760,7 +1680,11 @@ function renderAntibodies(rows) {
       <td>${esc(r.vh_confidence)} / ${esc(r.vl_confidence)}</td>
       <td class="mono">${esc(r.vh_trim)} · ${esc(r.vl_trim)}</td>
       <td class="note">${esc((r.updated_utc || "").replace("T", " ").replace("+00:00", "Z"))}</td>
-      <td><button class="ghost small" data-del="${esc(r.id)}">Remove</button></td></tr>`;
+      <td><button class="ghost small" data-edit="${esc(r.id)}">Edit</button>
+          <button class="ghost small" data-del="${esc(r.id)}">Remove</button></td></tr>`;
+    if (r.user_notes) {
+      html += `<tr><td colspan="9" class="note">${esc(r.user_notes)}</td></tr>`;
+    }
     if (r.notes) {
       html += `<tr><td colspan="9"><details class="sub"><summary>notes carried from typing</summary>
         <ul>${r.notes.split("; ").map((n) => `<li>${esc(n)}</li>`).join("")}</ul></details></td></tr>`;
@@ -775,6 +1699,7 @@ function renderAntibodies(rows) {
     box.onchange = () => {
       box.checked ? selected.add(box.dataset.pick) : selected.delete(box.dataset.pick);
       refreshSelection();
+      syncExpressTicks();
     };
   });
   const all = $("pickAll");
@@ -785,11 +1710,17 @@ function renderAntibodies(rows) {
       renderAntibodies(rows);
     };
   }
+  $("abOut").querySelectorAll("[data-edit]").forEach((b) => {
+    b.onclick = () => { editing.ab = b.dataset.edit; abEditor(); };
+  });
   $("abOut").querySelectorAll("[data-del]").forEach((b) => {
     b.onclick = async () => {
       if (!confirm(`Remove ${b.dataset.del} from the library?`)) return;
-      try { renderAntibodies((await postJSON("/api/antibody/delete", { id: b.dataset.del })).library); }
-      catch (e) { $("abOut").innerHTML += banner(e.message); }
+      try {
+        const d = await postJSON("/api/antibody/delete", { id: b.dataset.del });
+        renderAntibodies(d.library);
+        renderExpress(d.library, d.stale_derived);
+      } catch (e) { $("abOut").innerHTML += banner(e.message); }
     };
   });
   refreshSelection();
@@ -797,6 +1728,7 @@ function renderAntibodies(rows) {
 
 /* ================= Card 4: constructs library ================= */
 function renderConstructs(rows) {
+  lastConRows = rows;
   $("conCount").textContent = `${rows.length} stored`;
   $("conExport").hidden = rows.length === 0;
   if (!rows.length) {
@@ -818,7 +1750,11 @@ function renderConstructs(rows) {
       <td class="num">${esc(r.residue_count)} aa${r.has_stop === "yes" ? " + stop" : ""}</td>
       <td class="mono"><span class="seq" title="${esc(r.seq)}">${esc(r.seq)}</span></td>
       <td class="note">${esc((r.updated_utc || "").replace("T", " ").replace("+00:00", "Z"))}</td>
-      <td><button class="ghost small" data-delc="${esc(r.id)}">Remove</button></td></tr>`;
+      <td><button class="ghost small" data-editc="${esc(r.id)}">Edit</button>
+          <button class="ghost small" data-delc="${esc(r.id)}">Remove</button></td></tr>`;
+    if (r.user_notes) {
+      html += `<tr><td colspan="9" class="note">${esc(r.user_notes)}</td></tr>`;
+    }
     let segs = [];
     try { segs = JSON.parse(r.segments_json || "[]"); } catch {}
     if (segs.length) {
@@ -845,6 +1781,9 @@ function renderConstructs(rows) {
       renderConstructs(rows);
     };
   }
+  $("conOut").querySelectorAll("[data-editc]").forEach((b) => {
+    b.onclick = () => { editing.con = b.dataset.editc; conEditor(); };
+  });
   $("conOut").querySelectorAll("[data-delc]").forEach((b) => {
     b.onclick = async () => {
       if (!confirm(`Remove ${b.dataset.delc} from the constructs library?`)) return;
@@ -1096,6 +2035,8 @@ async function reloadPresets() {
   renderPalette();
   renderPresetButtons();
   renderLayout();
+  renderExpressPresets();
+  renderExpressLayout();
   renderPresetList();
   updateUtilBar();
 }
@@ -1228,7 +2169,8 @@ $("buildBtn").onclick = async () => {
   try {
     const d = await (await fetch("/api/library")).json();
     renderAntibodies(d.antibodies);
-    renderParts(d.parts);
+    renderExpress(d.antibodies, d.stale_derived, d.isotypes);
+    renderParts(d.parts, d.shadowed);
     renderConstructs(d.constructs);
   } catch { $("abOut").innerHTML = banner("Could not load the library."); }
   try {

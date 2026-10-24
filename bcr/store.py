@@ -23,6 +23,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .assemble import derived_chains
+
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 ANTIBODY_FIELDS = [
@@ -38,9 +40,21 @@ ANTIBODY_FIELDS = [
     "vl_trim",
     "vh_fr4",
     "vl_fr4",
+    # The three whole chains the pair implies, spliced with the intrinsic
+    # constant regions by assemble.derived_chains. Materialised here so the
+    # CSV is usable on its own -- they are derived, never a source of truth,
+    # and are recomputed from vh_seq / vl_seq on every write.
+    "light_chain",
+    "heavy_chain_igg1",
+    "heavy_chain_igm",
     "source_file",
     "updated_utc",
     "notes",
+    # `notes` is derived -- it carries the warnings typing produced.
+    # `user_notes` is free text the user owns, so an edit in the UI never
+    # overwrites a rule-derived warning. Both columns are appended last, so a
+    # table written by an older version still reads.
+    "user_notes",
 ]
 
 # Parts hold residues only. A stop codon is contributed by the layout at build
@@ -53,6 +67,7 @@ PART_FIELDS = [
     "subclass",
     "source_file",
     "updated_utc",
+    "user_notes",
 ]
 
 CONSTRUCT_FIELDS = [
@@ -69,6 +84,7 @@ CONSTRUCT_FIELDS = [
     "source_file",
     "updated_utc",
     "notes",
+    "user_notes",
 ]
 
 # A part's role is inferred from its sequence by bcr.assemble.infer_role,
@@ -153,33 +169,73 @@ class Store:
 
     # --- antibodies ------------------------------------------------------
 
-    def antibody_row(self, antibody_id, vh, vl, source_file) -> dict:
+    def antibody_row(self, antibody_id, vh, vl, source_file, keep=()) -> dict:
         """Build a row from two validated ChainResults.
 
         `vh` and `vl` are bcr.chains.ChainResult objects that have already
         passed typing; the caller is responsible for that check.
+
+        `keep` names the chains ("VH", "VL") whose proposed trim the user
+        declined. Those are stored exactly as they came in, and the row says
+        so: a sequence is never shortened without someone having said yes.
         """
+        keep = set(keep)
         notes = []
         for tag, result in (("VH", vh), ("VL", vl)):
             for warning in result.warnings:
                 notes.append(f"{tag}: {warning}")
+            if tag in keep and (result.n_trimmed or result.c_trimmed):
+                notes.append(
+                    f"{tag}: kept as given at your request -- the "
+                    f"{_trim_note(result)} the rules proposed is still present, "
+                    f"so this is not a bare V domain"
+                )
 
+        def stored(tag, result):
+            return result.input_seq if tag in keep else result.clean_seq
+
+        def trim_note(tag, result):
+            if tag not in keep:
+                return _trim_note(result)
+            return (
+                f"kept as given ({_trim_note(result)} declined)"
+                if result.n_trimmed or result.c_trimmed
+                else "none"
+            )
+
+        vh_seq, vl_seq = stored("VH", vh), stored("VL", vl)
+        chains = derived_chains(vh_seq, vl_seq, vl.subclass)
+        if not chains["light_chain"]:
+            notes.append(
+                "no whole light chain could be derived: the kappa/lambda call "
+                "is unknown, so neither IGKC nor IGLC2 can be chosen"
+            )
+        if keep:
+            notes.append(
+                "the derived whole chains splice a sequence that was kept as "
+                "given, so they are not a V domain plus a constant region"
+            )
         return {
             "id": antibody_id,
-            "vh_seq": vh.clean_seq,
-            "vl_seq": vl.clean_seq,
-            "vh_len": len(vh.clean_seq),
-            "vl_len": len(vl.clean_seq),
+            "vh_seq": vh_seq,
+            "vl_seq": vl_seq,
+            "vh_len": len(vh_seq),
+            "vl_len": len(vl_seq),
             "light_subclass": vl.subclass or "",
             "vh_confidence": vh.confidence,
             "vl_confidence": vl.confidence,
-            "vh_trim": _trim_note(vh),
-            "vl_trim": _trim_note(vl),
+            "vh_trim": trim_note("VH", vh),
+            "vl_trim": trim_note("VL", vl),
             # FR4 as actually observed: 11 residues for heavy (WGxGTxVTVSS),
             # 10 for light (FGxGTxVxxx). Identifies the J gene family and
             # records that the boundary landed where the rules say it should.
-            "vh_fr4": vh.clean_seq[-11:],
-            "vl_fr4": vl.clean_seq[-10:],
+            # Taken from the detected V end rather than the tail of what is
+            # stored, so it is still FR4 when a C-terminal trim was declined.
+            "vh_fr4": vh.input_seq[max(0, vh.v_end - 10) : vh.v_end + 1],
+            "vl_fr4": vl.input_seq[max(0, vl.v_end - 9) : vl.v_end + 1],
+            "light_chain": chains["light_chain"],
+            "heavy_chain_igg1": chains["heavy_chain_igg1"],
+            "heavy_chain_igm": chains["heavy_chain_igm"],
             "source_file": str(source_file),
             "updated_utc": utc_now(),
             "notes": "; ".join(notes),
@@ -214,23 +270,136 @@ class Store:
         self.parts.write_all(list(rows.values()))
         return outcome
 
+    def intrinsic_part_rows(self) -> list[dict]:
+        """The intrinsic parts as parts-table rows, marked as such.
+
+        They are never written to parts.csv: a layout resolves to them, so
+        they have to be beyond editing, and the only way to guarantee that is
+        not to keep an editable copy. They are merged in at read time instead,
+        the same way built-in presets are layered under the user's.
+        """
+        from . import assemble
+
+        return [
+            {
+                "name": name,
+                "seq": value["seq"],
+                "length": len(value["seq"]),
+                "role": value["role"],
+                "subclass": value["subclass"],
+                "source_file": value["source"],
+                "updated_utc": "",
+                "user_notes": value["description"],
+                "builtin": "yes",
+            }
+            for name, value in assemble.BUILTIN_PARTS.items()
+        ]
+
+    def all_part_rows(self) -> list[dict]:
+        """Intrinsic parts first, then the user's own.
+
+        A stored row whose name is now intrinsic is left out: the intrinsic
+        sequence is what every layout resolves to, so showing both would
+        suggest a choice that does not exist. Those rows are reported by
+        `shadowed_parts` instead, rather than being deleted on the quiet.
+        """
+        from . import assemble
+
+        user = [
+            dict(row, builtin="")
+            for row in self.parts.read()
+            if row["name"] not in assemble.RESERVED_PART_NAMES
+        ]
+        return self.intrinsic_part_rows() + user
+
+    def shadowed_parts(self) -> list[dict]:
+        """Stored rows whose names have become intrinsic.
+
+        These predate the intrinsic parts: they are no longer used by anything
+        and can be removed, but that is the user's call, so they are reported
+        rather than cleaned up. `same` says whether the stored sequence still
+        matches the intrinsic one.
+        """
+        from . import assemble
+
+        return [
+            {
+                "name": row["name"],
+                "length": row.get("length", ""),
+                "same": row["seq"] == assemble.INTRINSIC_SEQS[row["name"]],
+            }
+            for row in self.parts.read()
+            if row["name"] in assemble.RESERVED_PART_NAMES
+        ]
+
     def parts_as_dict(self) -> dict[str, str]:
-        """The parts table in the shape bcr.assemble.build expects."""
-        return {row["name"]: row["seq"] for row in self.parts.read()}
+        """The parts table in the shape bcr.assemble.build expects.
+
+        Intrinsic parts are included and win over a same-named user row, which
+        import and editing both refuse to create in any case.
+        """
+        from . import assemble
+
+        # Intrinsic first, and a reserved name in the CSV is skipped rather
+        # than merged: a hand-edited table must not be able to shadow one.
+        merged = dict(assemble.INTRINSIC_SEQS)
+        for row in self.parts.read():
+            if row["name"] not in assemble.RESERVED_PART_NAMES:
+                merged[row["name"]] = row["seq"]
+        return merged
+
+    def stale_derived(self) -> list[str]:
+        """Antibody ids whose derived whole-chain columns are out of date."""
+        stale = []
+        for row in self.antibodies.read():
+            chains = derived_chains(
+                row.get("vh_seq", ""),
+                row.get("vl_seq", ""),
+                row.get("light_subclass", ""),
+            )
+            if any(row.get(key, "") != value for key, value in chains.items()):
+                stale.append(row["id"])
+        return stale
+
+    def refresh_derived(self) -> list[str]:
+        """Recompute the derived columns for every antibody. Returns the ids
+        that changed. Rewrites nothing when nothing is stale."""
+        rows = self.antibodies.read()
+        changed = []
+        for row in rows:
+            chains = derived_chains(
+                row.get("vh_seq", ""),
+                row.get("vl_seq", ""),
+                row.get("light_subclass", ""),
+            )
+            if any(row.get(key, "") != value for key, value in chains.items()):
+                row.update(chains)
+                changed.append(row["id"])
+        if changed:
+            self.antibodies.write_all(rows)
+        return changed
 
     # --- constructs ------------------------------------------------------
 
     def construct_row(self, construct, preset, source_file) -> dict:
         """Build a row from an assembled bcr.assemble.Construct."""
+        from . import assemble
+
         cl_segment = next(
             (s for s in construct.segments if s.kind == "light_constant"), None
         )
+        cl_part = cl_segment.label if cl_segment else ""
+        if not cl_part and any(s.kind == "light_chain" for s in construct.segments):
+            # An express layout folds the constant region into the whole light
+            # chain, so there is no segment of its own to read it off; the
+            # subclass names it just as well.
+            cl_part = assemble.CL_FOR_SUBCLASS.get(construct.subclass or "", "")
         return {
             "id": f"{construct.name}_BCR",
             "antibody_id": construct.name,
             "preset": preset,
             "subclass": construct.subclass or "",
-            "cl_part": cl_segment.label if cl_segment else "",
+            "cl_part": cl_part,
             "seq": construct.seq,
             "residue_count": construct.residue_count,
             "has_stop": "yes" if construct.has_stop else "no",

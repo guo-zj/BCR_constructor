@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "Intrinsic construct parts. These ship with the package and are not",
+    "editable from the UI: a layout names them outright or resolves to them",
+    "per antibody, so losing or altering one breaks every layout at once.",
+    "Their names are reserved -- an imported parts file using one is asked to",
+    "rename. IGKC and IGLC2 are transcribed from antibody-chain-rules.md",
+    "section 5; the two CHTMCT sequences are membrane-bound heavy constant",
+    "regions (CH1 through the transmembrane and cytoplasmic tail)."
+  ],
+  "parts": {
+    "IGKC": {
+      "seq": "RTVAAPSVFIFPPSDEQLKSGTASVVCLLNNFYPREAKVQWKVDNALQSGNSQESVTEQDSKDSTYSLSSTLTLSKADYEKHKVYACEVTHQGLSSPVTKSFNRGEC",
+      "description": "Human kappa light constant region.",
+      "source": "antibody-chain-rules.md section 5"
+    },
+    "IGLC2": {
+      "seq": "GQPKAAPSVTLFPPSSEELQANKATLVCLISDFYPGAVTVAWKADSSPVKAGVETTTPSKQSNNKYAASSYLSLTPEQWKSHRSYSCQVTHEGSTVEKTVAPTECS",
+      "description": "Human lambda light constant region (IGLC2, the standard choice for recombinant work).",
+      "source": "antibody-chain-rules.md section 5"
+    },
+    "CHTMCTIgG1": {
+      "seq": "ASTKGPSVFPLAPSSKSTSGGTAALGCLVKDYFPEPVTVSWNSGALTSGVHTFPAVLQSSGLYSLSSVVTVPSSSLGTQTYICNVNHKPSNTKVDKRVEPKSCDKTHTCPPCPAPELLGGPSVFLFPPKPKDTLMISRTPEVTCVVVDVSHEDPEVKFNWYVDGVEVHNAKTKPREEQYNSTYRVVSVLTVLHQDWLNGKEYKCKVSNKALPAPIEKTISKAKGQPREPQVYTLPPSRDELTKNQVSLTCLVKGFYPSDIAVEWESNGQPENNYKTTPPVLDSDGSFFLYSKLTVDKSRWQQGNVFSCSVMHEALHNHYTQKSLSLSPELQLEESCAEAQDGELDGLWTTITIFITLFLLSVCYSATVTFFKVKWIFSSVVDLKQTIIPDYRNMIGQGA",
+      "description": "IgG1 heavy constant region, CH1-CH3 plus the transmembrane and cytoplasmic tail.",
+      "source": "misc_2A.fasta"
+    },
+    "CHTMCTIgM": {
+      "seq": "GSASAPTLFPLVSCENSPSDTSSVAVGCLAQDFLPDSITFSWKYKNNSDISSTRGFPSVLRGGKYAATSQVLLPSKDVMQGTDEHVVCKVQHPNGNKEKNVPLPVIAELPPKVSVFVPPRDGFFGNPRKSKLICQATGFSPRQIQVSWLREGKQVGSGVTTDQVQAEAKESGPTTYKVTSTLTIKESDWLGQSMFTCRVDHRGLTFQQNASSMCVPDQDTAIRVFAIPPSFASIFLTKSTKLTCLVTDLTTYDSVTISWTRQNGEAVKTHTNISESHPNATFSAVGEASICEDDWNSGERFTCTVTHTDLPSPLKQTISRPKGVALHRPDVYLLPPAREQLNLRESATITCLVTGFSPADVFVQWMQRGQPLSPEKYVTSAPMPEPQAPGRYFAHSILTVSEEEWNTGETYTCVVAHEALPNRVTERTVDKSTEGEVSADEEGFENLWATASTFIVLFLLSLFYSTTVTLFKVK",
+      "description": "IgM heavy constant region, CH1-CH4 plus the transmembrane and cytoplasmic tail.",
+      "source": "misc_2A.fasta"
+    }
+  }
+}

@@ -23,9 +23,19 @@ from .chains import ChainResult, parse_declared
 # from its own kappa/lambda call, so the code has to know what to look for.
 CL_FOR_SUBCLASS = {"kappa": "IGKC", "lambda": "IGLC2"}
 
-# Every other part name comes from the parts FASTA and is not known in advance,
-# so only the light constants are required.
-REQUIRED_PARTS = tuple(CL_FOR_SUBCLASS.values())
+# Which heavy constant region each isotype takes. Named outright by a layout,
+# but fixed for the same reason: express mode offers an isotype rather than a
+# part name, so the code has to know which part that means.
+CH_FOR_ISOTYPE = {"igg1": "CHTMCTIgG1", "igm": "CHTMCTIgM"}
+ISOTYPES = tuple(CH_FOR_ISOTYPE)
+ISOTYPE_LABEL = {"igg1": "IgG1", "igm": "IgM"}
+
+# Intrinsic parts ship with the package (builtin_parts.json) and are never
+# written to the parts table: a layout either names one outright or resolves
+# to one per antibody, so altering or losing one breaks every layout at once.
+# Their names are reserved -- an imported parts file using one is asked to
+# rename, rather than silently shadowing the intrinsic sequence.
+BUILTIN_PART_FILE = Path(__file__).with_name("builtin_parts.json")
 
 # The first residues a part must carry, where we can identify it by name.
 # The knowledge base (section 6) is explicit that a constant region starts at
@@ -34,6 +44,8 @@ REQUIRED_PARTS = tuple(CL_FOR_SUBCLASS.values())
 EXPECTED_START = {
     "IGKC": rules.CL_KAPPA_START[:8],  # RTVAAPSV
     "IGLC2": rules.CL_LAMBDA_START[:9],  # GQPKAAPSV
+    "CHTMCTIgG1": rules.CH1_IGG1_START,  # ASTKGPSVFPLAP
+    "CHTMCTIgM": rules.CH1_IGM_START,  # GSASAPTLFPLVSC
 }
 
 # Since part names are free-form, a part's role is read from its sequence
@@ -43,6 +55,7 @@ ROLE_SIGNATURES = (
     (rules.CL_KAPPA_START[:8], "light_constant", "kappa"),
     (rules.CL_LAMBDA_START[:9], "light_constant", "lambda"),
     (rules.CH1_IGG1_START, "heavy_constant", ""),
+    (rules.CH1_IGM_START, "heavy_constant", ""),
 )
 
 # A signal peptide is short and begins at Met. Nothing else in a construct
@@ -61,6 +74,73 @@ def infer_role(seq: str) -> tuple[str, str]:
     return "other", ""
 
 
+def load_builtin_parts(path=None) -> dict[str, dict]:
+    """Read the intrinsic parts. Returns {name: {seq, role, subclass, ...}}.
+
+    A missing or malformed file is a broken installation rather than a
+    recoverable condition: every shipped layout resolves to these, so carrying
+    on with none of them would turn a packaging fault into a pile of
+    "missing part" alerts.
+    """
+    path = Path(path or BUILTIN_PART_FILE)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"intrinsic part file is missing: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"intrinsic part file is not valid JSON: {path}: {exc}"
+        ) from exc
+
+    raw = data.get("parts")
+    if not isinstance(raw, dict) or not raw:
+        raise RuntimeError(f"{path} defines no parts")
+
+    loaded: dict[str, dict] = {}
+    for name, value in raw.items():
+        if not isinstance(value, dict) or not isinstance(value.get("seq"), str):
+            raise RuntimeError(f"{path}: part '{name}' has no sequence")
+        seq, problems = validate_part(name, value["seq"])
+        if problems:
+            raise RuntimeError(f"{path}: {problems[0]}")
+        role, subclass = infer_role(seq)
+        loaded[name] = {
+            "seq": seq,
+            "role": role,
+            "subclass": subclass,
+            "description": value.get("description", ""),
+            "source": value.get("source", str(path.name)),
+        }
+
+    for required in (*CL_FOR_SUBCLASS.values(), *CH_FOR_ISOTYPE.values()):
+        if required not in loaded:
+            raise RuntimeError(f"{path} is missing the intrinsic part '{required}'")
+    return loaded
+
+
+def derived_chains(vh_seq: str, vl_seq: str, subclass: str | None) -> dict[str, str]:
+    """The three whole chains a V-domain pair implies.
+
+    Spliced from the intrinsic parts only, so these are reproducible from the
+    library alone and cannot drift with whatever is in the user's parts table:
+
+        light_chain       VL + IGKC or IGLC2, from the antibody's own call
+        heavy_chain_igg1  VH + CHTMCTIgG1
+        heavy_chain_igm   VH + CHTMCTIgM
+
+    A chain whose inputs are absent comes back empty rather than half-built.
+    """
+    chains = {"light_chain": "", "heavy_chain_igg1": "", "heavy_chain_igm": ""}
+    cl_name = CL_FOR_SUBCLASS.get(subclass or "")
+    if vl_seq and cl_name:
+        chains["light_chain"] = vl_seq + INTRINSIC_SEQS[cl_name]
+    if vh_seq:
+        for isotype, part in CH_FOR_ISOTYPE.items():
+            chains[f"heavy_chain_{isotype}"] = vh_seq + INTRINSIC_SEQS[part]
+    return chains
+
+
 def missing_parts(slots, parts) -> list[str]:
     """Part names a layout needs that the parts table does not hold."""
     names: list[str] = []
@@ -72,8 +152,13 @@ def missing_parts(slots, parts) -> list[str]:
             name = slot.get("part")
             if name and name not in parts and name not in names:
                 names.append(name)
-        elif slot.get("kind") == "light_constant":
+        elif slot.get("kind") in ("light_constant", "light_chain"):
             uses_light_constant = True
+        elif slot.get("kind") == "heavy_chain":
+            # The isotype names the part, so check that one rather than both.
+            name = CH_FOR_ISOTYPE.get(slot.get("isotype", ""))
+            if name and name not in parts and name not in names:
+                names.append(name)
     if uses_light_constant:
         # Both are needed: which one is used depends on the antibody.
         for name in CL_FOR_SUBCLASS.values():
@@ -99,13 +184,19 @@ def suggest_part(name: str, parts) -> str | None:
 #   part            a fixed sequence from the parts table, named outright
 #   vl / vh         that antibody's own trimmed V domain
 #   light_constant  resolved per antibody to IGKC or IGLC2 from its subclass
+#   light_chain     the whole light chain: VL plus its own constant region
+#   heavy_chain     the whole heavy chain: VH plus CHTMCT for an isotype
 #   stop            the stop codon, contributed by the layout
 #
-# The stop codon is a slot rather than a property of any part: stored parts
-# hold residues only, so whichever parts a layout uses, exactly one '*' is
-# appended and it is always the last character.
+# light_chain and heavy_chain are what express mode uses. They say the same
+# thing as `vl` + `light_constant` and `vh` + a named CH part, and assemble to
+# the same residues, but as one slot each: the isotype is chosen on the layout
+# rather than by naming a part, so a layout can be offered per isotype without
+# the user having to know which part a given isotype means.
 
-SLOT_KINDS = ("part", "vl", "vh", "light_constant", "stop")
+SLOT_KINDS = (
+    "part", "vl", "vh", "light_constant", "light_chain", "heavy_chain", "stop",
+)
 STOP = "*"
 
 # The layouts that ship with the package, as data rather than code. The part
@@ -145,6 +236,7 @@ def load_builtin_presets(path=None) -> tuple[dict, str]:
             raise RuntimeError(f"{path}: preset '{key}' has no slot list")
         value.setdefault("label", key)
         value.setdefault("description", "")
+        value.setdefault("express", False)
     if default not in presets:
         raise RuntimeError(f"{path}: default '{default}' is not one of its presets")
     return presets, default
@@ -165,6 +257,13 @@ def slot_label(slot: dict, subclass: str | None = None) -> str:
     if kind == "light_constant":
         resolved = CL_FOR_SUBCLASS.get(subclass or "")
         return resolved or " / ".join(CL_FOR_SUBCLASS.values())
+    if kind == "light_chain":
+        resolved = CL_FOR_SUBCLASS.get(subclass or "")
+        return f"Light chain (VL+{resolved})" if resolved else "Light chain (VL+CL)"
+    if kind == "heavy_chain":
+        isotype = slot.get("isotype", "")
+        label = ISOTYPE_LABEL.get(isotype, isotype or "?")
+        return f"Heavy chain {label}"
     if kind == "stop":
         return "Stop"
     return kind
@@ -193,6 +292,11 @@ def validate_slots(slots) -> list[str]:
             continue
         if kind == "part" and not slot.get("part"):
             problems.append(f"component {position}: no part named")
+        if kind == "heavy_chain" and slot.get("isotype") not in ISOTYPES:
+            problems.append(
+                f"component {position}: a heavy chain needs an isotype "
+                f"({' or '.join(ISOTYPES)}), not {slot.get('isotype')!r}"
+            )
 
     kinds = [s.get("kind") for s in slots if isinstance(s, dict)]
     # The stop codon terminates translation, so nothing can follow it.
@@ -205,6 +309,22 @@ def validate_slots(slots) -> list[str]:
             problems.append(f"a layout can carry at most one {label}")
     if kinds.count("light_constant") > 1:
         problems.append("a layout can carry at most one light constant region")
+    # A whole-chain slot already contains the V domain and, for the light
+    # chain, its constant region. Placing both forms would put the same
+    # sequence in twice, which is a layout mistake rather than a format.
+    if kinds.count("light_chain") + kinds.count("vl") > 1:
+        problems.append(
+            "a layout can carry either a VL or a whole light chain, not both"
+        )
+    if kinds.count("light_chain") and kinds.count("light_constant"):
+        problems.append(
+            "a whole light chain already includes its constant region, so it "
+            "cannot be combined with a light constant slot"
+        )
+    if kinds.count("heavy_chain") + kinds.count("vh") > 1:
+        problems.append(
+            "a layout can carry either a VH or a whole heavy chain, not both"
+        )
     return problems
 
 
@@ -256,6 +376,24 @@ def describe_layout(
                 entry["detail"] = f"{subclass}"
             else:
                 entry["detail"] = "chosen per antibody"
+        elif kind == "light_chain":
+            resolved = CL_FOR_SUBCLASS.get(subclass or "")
+            entry["resolved"] = resolved
+            cl_len = len(INTRINSIC_SEQS[resolved]) if resolved else None
+            entry["detail"] = (
+                f"VL + {resolved} ({cl_len} aa) per antibody"
+                if resolved
+                else "VL + IGKC or IGLC2, chosen per antibody"
+            )
+        elif kind == "heavy_chain":
+            part = CH_FOR_ISOTYPE.get(slot.get("isotype", ""))
+            entry["resolved"] = part
+            if part:
+                entry["detail"] = (
+                    f"VH + {part} ({len(INTRINSIC_SEQS[part])} aa) per antibody"
+                )
+            else:
+                entry["detail"] = "no isotype chosen"
         elif kind == "stop":
             entry["detail"] = "appended on build"
         described.append(entry)
@@ -306,49 +444,90 @@ class Construct:
         return " | ".join(f"{s.label}({len(s.seq)})" for s in self.segments)
 
 
-def load_parts(path) -> tuple[dict[str, str], list[str]]:
-    """Read misc.fasta and validate the parts against the knowledge base.
+def validate_part(name: str, seq: str) -> tuple[str, list[str]]:
+    """Check one part sequence. Returns (residues, problems).
 
-    Returns (parts, problems). A non-empty `problems` list means the part file
-    cannot be trusted and nothing should be assembled from it.
+    Shared by the parts-file import and the manual editor, so a hand-typed
+    part is held to exactly the same rules as an imported one.
+    """
+    # A trailing '*' is tolerated and dropped: parts are stored as residues
+    # only, and the stop codon is contributed by the layout instead (the
+    # `stop` slot), so it lands exactly once at the C-terminus of the finished
+    # construct no matter which parts are used.
+    core = seq[:-1] if seq.endswith("*") else seq
+    problems: list[str] = []
+    if "*" in core:
+        problems.append(
+            f"'{name}' has a '*' before its C-terminus, which means the "
+            f"sequence is truncated"
+        )
+    bad = sorted(set(core) - rules.AMINO_ACIDS)
+    if bad:
+        problems.append(f"'{name}' contains non-amino-acid characters: {''.join(bad)}")
+    # Section 6: a constant region begins at its own first residue.
+    expected = EXPECTED_START.get(name)
+    if expected and core and not core.startswith(expected):
+        problems.append(
+            f"'{name}' should begin at its own first residue {expected} "
+            f"but begins {core[: len(expected)]}"
+        )
+    return core, problems
+
+
+BUILTIN_PARTS = load_builtin_parts()
+
+#: Part names the user cannot take: they resolve to an intrinsic sequence.
+RESERVED_PART_NAMES = frozenset(BUILTIN_PARTS)
+
+#: The intrinsic sequences alone, in the shape the assembly code wants.
+INTRINSIC_SEQS = {name: value["seq"] for name, value in BUILTIN_PARTS.items()}
+
+
+def read_parts_file(path) -> tuple[dict[str, str], list[str], dict[str, str]]:
+    """Read a parts FASTA. Returns (parts, problems, reserved).
+
+    `reserved` holds the records whose names belong to the intrinsic parts.
+    They are kept apart rather than merged or dropped so the caller can decide:
+    the import flow offers a rename, the CLI reports them as problems. Nothing
+    in `parts` ever shadows an intrinsic sequence.
     """
     from .fasta import read_fasta
 
     raw = {r.name: r.seq for r in read_fasta(path)}
     problems: list[str] = []
     parts: dict[str, str] = {}
+    reserved: dict[str, str] = {}
 
     for name, seq in raw.items():
-        # A trailing '*' in a source file is tolerated and dropped: parts are
-        # stored as residues only, and the stop codon is contributed by the
-        # layout instead (the `stop` slot), so it lands exactly once at the
-        # C-terminus of the finished construct no matter which parts are used.
-        core = seq[:-1] if seq.endswith("*") else seq
-        if "*" in core:
-            problems.append(
-                f"'{name}' has a '*' before its C-terminus, which means the "
-                f"sequence is truncated"
-            )
-        bad = sorted(set(core) - rules.AMINO_ACIDS)
-        if bad:
-            problems.append(f"'{name}' contains non-amino-acid characters: {''.join(bad)}")
+        core, trouble = validate_part(name, seq)
+        if name in RESERVED_PART_NAMES:
+            reserved[name] = core
+            continue
+        problems.extend(trouble)
         parts[name] = core
 
-    for name in REQUIRED_PARTS:
-        if name not in parts:
-            problems.append(f"misc file is missing a '{name}' sequence")
-        elif not parts[name]:
-            problems.append(f"'{name}' is empty")
+    return parts, problems, reserved
 
-    for name, expected in EXPECTED_START.items():
-        seq = parts.get(name)
-        if seq and not seq.startswith(expected):
+
+def load_parts(path) -> tuple[dict[str, str], list[str]]:
+    """The parts FASTA as the CLI wants it: intrinsic parts already merged in.
+
+    Returns (parts, problems). A non-empty `problems` list means the part file
+    cannot be trusted and nothing should be assembled from it. A file that
+    reuses an intrinsic name is a problem rather than a silent override --
+    whichever sequence won would be a coin toss to whoever reads the output.
+    """
+    parts, problems, reserved = read_parts_file(path)
+    for name, seq in sorted(reserved.items()):
+        # A record identical to the intrinsic sequence overrides nothing, so
+        # it is simply redundant. Only a differing one needs a rename.
+        if seq != INTRINSIC_SEQS[name]:
             problems.append(
-                f"'{name}' should begin at its own first residue {expected} "
-                f"but begins {seq[: len(expected)]}"
+                f"'{name}' is an intrinsic part name and the sequence in this "
+                f"file differs from the intrinsic one; rename that record"
             )
-
-    return parts, problems
+    # Intrinsic parts are always available and always win.
+    return {**parts, **INTRINSIC_SEQS}, problems
 
 
 def pair_chains(results: list[ChainResult]) -> dict[str, dict[str, ChainResult]]:
@@ -392,13 +571,29 @@ def build_from_layout(
 
     kinds = {s["kind"] for s in slots if isinstance(s, dict)}
     # Only demand a chain the layout actually places.
-    if "vh" in kinds and not vh_seq:
+    if ("vh" in kinds or "heavy_chain" in kinds) and not vh_seq:
         construct.errors.append("no heavy chain (VH) for this antibody")
-    if "vl" in kinds and not vl_seq:
+    if ("vl" in kinds or "light_chain" in kinds) and not vl_seq:
         construct.errors.append("no light chain (VL) for this antibody")
 
+    # The three whole chains express mode places, spliced from the intrinsic
+    # parts. Computed here rather than read from the library, so a construct
+    # is always consistent with the V domains it names.
+    whole = derived_chains(vh_seq, vl_seq, subclass)
+    for slot in slots:
+        if slot.get("kind") != "heavy_chain":
+            continue
+        isotype = slot.get("isotype", "")
+        if isotype not in CH_FOR_ISOTYPE:
+            construct.errors.append(
+                f"heavy chain slot has no usable isotype ({isotype!r}); "
+                f"expected {' or '.join(ISOTYPES)}"
+            )
+
     cl_name = CL_FOR_SUBCLASS.get(subclass or "")
-    needs_cl = any(s["kind"] == "light_constant" for s in slots)
+    needs_cl = any(
+        s["kind"] in ("light_constant", "light_chain") for s in slots
+    )
     if needs_cl and cl_name is None:
         construct.errors.append(
             f"light chain is neither kappa nor lambda (subclass "
@@ -450,6 +645,15 @@ def build_from_layout(
             seq, label, source = vh_seq, f"VH:{antibody_id}", antibody_id
         elif kind == "light_constant":
             seq, label, source = parts[cl_name], cl_name, cl_name
+        elif kind == "light_chain":
+            seq = whole["light_chain"]
+            label = f"LC:{antibody_id}(VL+{cl_name})"
+            source = antibody_id
+        elif kind == "heavy_chain":
+            isotype = slot["isotype"]
+            seq = whole[f"heavy_chain_{isotype}"]
+            label = f"HC:{antibody_id}(VH+{CH_FOR_ISOTYPE[isotype]})"
+            source = antibody_id
         elif kind == "stop":
             seq, label, source = STOP, "Stop", "layout"
         else:

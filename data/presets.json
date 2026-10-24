@@ -45,5 +45,161 @@
       }
     ],
     "updated_utc": "2026-10-23T01:54:48+00:00"
+  },
+  "2alinked_igg1": {
+    "description": "",
+    "label": "2Alinked_IGG1",
+    "slots": [
+      {
+        "kind": "part",
+        "part": "SignalHC"
+      },
+      {
+        "kind": "vh"
+      },
+      {
+        "kind": "part",
+        "part": "CHTMCTIgG1"
+      },
+      {
+        "kind": "part",
+        "part": "Furin"
+      },
+      {
+        "kind": "part",
+        "part": "F2A"
+      },
+      {
+        "kind": "part",
+        "part": "SignalLC"
+      },
+      {
+        "kind": "vl"
+      },
+      {
+        "kind": "light_constant"
+      },
+      {
+        "kind": "part",
+        "part": "T2A"
+      },
+      {
+        "kind": "part",
+        "part": "EGFP"
+      },
+      {
+        "kind": "stop"
+      }
+    ],
+    "updated_utc": "2026-10-23T17:33:32+00:00"
+  },
+  "2alinked_igm": {
+    "description": "",
+    "label": "2Alinked_IGM",
+    "slots": [
+      {
+        "kind": "part",
+        "part": "SignalHC"
+      },
+      {
+        "kind": "vh"
+      },
+      {
+        "kind": "part",
+        "part": "CHTMCTIgM"
+      },
+      {
+        "kind": "part",
+        "part": "Furin"
+      },
+      {
+        "kind": "part",
+        "part": "F2A"
+      },
+      {
+        "kind": "part",
+        "part": "SignalLC"
+      },
+      {
+        "kind": "vl"
+      },
+      {
+        "kind": "light_constant"
+      },
+      {
+        "kind": "part",
+        "part": "T2A"
+      },
+      {
+        "kind": "part",
+        "part": "EGFP"
+      },
+      {
+        "kind": "stop"
+      }
+    ],
+    "updated_utc": "2026-10-23T17:34:12+00:00"
+  },
+  "single_chain_bcr_igg1": {
+    "description": "Membrane-bound single-chain BCR: the light chain and its constant region first, then a flexible linker, then the heavy chain with CH1-CH3 and the transmembrane tail.",
+    "label": "Single chain BCR_IGG1",
+    "slots": [
+      {
+        "kind": "part",
+        "part": "SignalHC"
+      },
+      {
+        "kind": "vl"
+      },
+      {
+        "kind": "light_constant"
+      },
+      {
+        "kind": "part",
+        "part": "LinkerSC"
+      },
+      {
+        "kind": "vh"
+      },
+      {
+        "kind": "part",
+        "part": "CHTMCTIgG1"
+      },
+      {
+        "kind": "stop"
+      }
+    ],
+    "updated_utc": "2026-10-23T17:33:58+00:00"
+  },
+  "single_chain_bcr_igm": {
+    "description": "Membrane-bound single-chain BCR: the light chain and its constant region first, then a flexible linker, then the heavy chain with CH1-CH3 and the transmembrane tail.",
+    "label": "Single chain BCR_IGM",
+    "slots": [
+      {
+        "kind": "part",
+        "part": "SignalHC"
+      },
+      {
+        "kind": "vl"
+      },
+      {
+        "kind": "light_constant"
+      },
+      {
+        "kind": "part",
+        "part": "LinkerSC"
+      },
+      {
+        "kind": "vh"
+      },
+      {
+        "kind": "part",
+        "part": "CHTMCTIgM"
+      },
+      {
+        "kind": "stop"
+      }
+    ],
+    "updated_utc": "2026-10-23T17:34:34+00:00"
   }
 }

@@ -56,6 +56,9 @@ class ChainResult:
     detected: str | None
     subclass: str | None  # "kappa" / "lambda" / None
     clean_seq: str = ""
+    # The sequence as given, minus a trailing stop codon: what gets stored if
+    # the user declines the proposed trim and keeps the record as it came.
+    input_seq: str = ""
     v_start: int = 0
     v_end: int = 0
     n_trimmed: int = 0
@@ -322,6 +325,7 @@ def process(name: str, seq: str) -> ChainResult:
     # validation below. An internal '*' is left in place so it is reported as
     # the truncation it represents.
     seq = seq.rstrip("*")
+    result.input_seq = seq
 
     bad = sorted(set(seq) - rules.AMINO_ACIDS)
     if bad:

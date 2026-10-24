@@ -63,7 +63,9 @@ class BuiltinPresetFileTests(unittest.TestCase):
         self.assertEqual(
             data["presets"][key]["slots"], assemble.PRESETS[key]["slots"]
         )
-        self.assertEqual(data["presets"][key]["label"], "Single chain BCR")
+        self.assertEqual(
+            data["presets"][key]["label"], assemble.PRESETS[key]["label"]
+        )
 
     def test_no_preset_label_is_hardcoded_in_python(self):
         """Editing the JSON must be enough to rename or relayout a preset."""
@@ -221,7 +223,10 @@ class PresetStoreTests(unittest.TestCase):
         )
         entry = self.store.all()[assemble.DEFAULT_PRESET]
         self.assertTrue(entry["builtin"])
-        self.assertEqual(entry["label"], "Single chain BCR")
+        self.assertEqual(
+            entry["label"], assemble.PRESETS[assemble.DEFAULT_PRESET]["label"]
+        )
+        self.assertNotEqual(entry["label"], "x")
 
     def test_delete(self):
         self.store.save("heavy_only", "Heavy only", "", HEAVY_ONLY, "now")
@@ -261,8 +266,30 @@ class PresetApiTests(unittest.TestCase):
     def test_palette_has_one_tag_per_part_plus_the_domains(self):
         labels = [i["label"] for i in self.palette()]
         self.assertEqual(
-            labels, ["VL", "VH", "IGKC / IGLC2", "SignalHC", "LinkerSC", "CHandCTSC", "Stop"]
+            labels,
+            [
+                # the antibody's own domains, and the light constant as one tag
+                "VL", "VH", "IGKC / IGLC2",
+                # the whole chains express layouts place
+                "Light chain", "Heavy chain IgG1", "Heavy chain IgM",
+                # the intrinsic heavy constants come first, then the user's
+                "CHTMCTIgG1", "CHTMCTIgM",
+                "SignalHC", "LinkerSC", "SignalLC", "Furin", "F2A", "T2A",
+                "EGFP", "CHandCTSC",
+                "Stop",
+            ],
         )
+
+    def test_the_whole_chain_tags_carry_their_isotype(self):
+        by_label = {i["label"]: i for i in self.palette()}
+        self.assertEqual(by_label["Heavy chain IgG1"]["isotype"], "igg1")
+        self.assertEqual(by_label["Heavy chain IgM"]["isotype"], "igm")
+        self.assertEqual(by_label["Light chain"]["kind"], "light_chain")
+
+    def test_intrinsic_parts_are_grouped_apart_from_the_users(self):
+        groups = {i["label"]: i["group"] for i in self.palette()}
+        self.assertEqual(groups["CHTMCTIgG1"], "Intrinsic")
+        self.assertEqual(groups["SignalHC"], "Parts")
 
     def test_igkc_and_iglc2_share_a_single_tag(self):
         """Not one tag each: a layout chooses between them per antibody."""
@@ -436,9 +463,9 @@ class MissingPartAlertTests(unittest.TestCase):
     def test_missing_parts_are_listed_on_the_preset(self):
         presets = self.client.get("/api/presets").get_json()["presets"]
         missing = presets[assemble.DEFAULT_PRESET]["missing"]
-        self.assertEqual(
-            [m["part"] for m in missing], ["SignalHC", "LinkerSC", "CHandCTSC"]
-        )
+        # CHTMCTIgG1 is intrinsic, so it is never missing; the two parts the
+        # layout names by hand are what the old file does not carry.
+        self.assertEqual([m["part"] for m in missing], ["SignalHC", "LinkerSC"])
 
     def test_a_near_miss_name_gets_a_suggestion(self):
         presets = self.client.get("/api/presets").get_json()["presets"]
@@ -448,7 +475,6 @@ class MissingPartAlertTests(unittest.TestCase):
         }
         self.assertEqual(hints["SignalHC"], "Signal")
         self.assertEqual(hints["LinkerSC"], "Linker")
-        self.assertEqual(hints["CHandCTSC"], "CHandCT")
 
     def test_plan_refuses_and_names_what_is_missing(self):
         res = self.client.post("/api/plan", json={"ids": ["GL_VRC01"]})
@@ -457,7 +483,7 @@ class MissingPartAlertTests(unittest.TestCase):
         self.assertIn("not in the parts table", data["error"])
         self.assertIn("SignalHC", data["error"])
         self.assertIn("did you mean 'Signal'", data["error"])
-        self.assertEqual(len(data["missing"]), 3)
+        self.assertEqual(len(data["missing"]), 2)
 
     def test_build_refuses_rather_than_assembling_a_gap(self):
         out = self.dir / "x.fasta"

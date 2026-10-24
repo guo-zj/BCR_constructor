@@ -62,6 +62,10 @@ class PresetStore:
                 "description": value.get("description", ""),
                 "slots": value["slots"],
                 "builtin": True,
+                # Express layouts are the ones offered on the back of the
+                # assembly card: they place whole chains, so they need nothing
+                # from the user but the signal peptides and linkers.
+                "express": bool(value.get("express")),
             }
         for key, value in self.read_user().items():
             if key in RESERVED_KEYS:
@@ -71,6 +75,7 @@ class PresetStore:
                 "description": value.get("description", ""),
                 "slots": value["slots"],
                 "builtin": False,
+                "express": False,
                 "updated_utc": value.get("updated_utc", ""),
             }
         return merged
@@ -117,6 +122,29 @@ class PresetStore:
         }
         self._write(data)
         return outcome
+
+    def rename_part(self, old: str, new: str) -> list[str]:
+        """Point every user preset slot naming `old` at `new` instead.
+
+        Renaming a part would otherwise silently break the layouts built on
+        it: a slot keeps the old name, and the preset becomes unbuildable with
+        a "missing part" alert. Returns the keys that were rewritten.
+        """
+        data = self.read_user()
+        touched = []
+        for key, value in data.items():
+            slots = value.get("slots") or []
+            if not any(
+                isinstance(s, dict) and s.get("part") == old for s in slots
+            ):
+                continue
+            for slot in slots:
+                if isinstance(slot, dict) and slot.get("part") == old:
+                    slot["part"] = new
+            touched.append(key)
+        if touched:
+            self._write(data)
+        return sorted(touched)
 
     def delete(self, key) -> bool:
         if key in RESERVED_KEYS:

@@ -1,16 +1,66 @@
 {
-  "default": "single_chain_bcr",
+  "_comment": [
+    "The layouts that ship with the package. The four express layouts place a",
+    "whole light chain and a whole heavy chain of a chosen isotype, which the",
+    "intrinsic parts (builtin_parts.json) resolve -- so they are buildable",
+    "from the antibody library alone, with no part named by the layout except",
+    "the signal peptides, linker and 2A elements the user supplies."
+  ],
+  "default": "single_chain_bcr_igg1",
   "presets": {
-    "single_chain_bcr": {
-      "label": "Single chain BCR",
-      "description": "Membrane-bound single-chain BCR: the light chain and its constant region first, then a flexible linker, then the heavy chain with CH1-CH3 and the transmembrane tail.",
+    "single_chain_bcr_igg1": {
+      "label": "Single chain BCR_IGG1",
+      "express": true,
+      "description": "Membrane-bound single-chain BCR: the whole light chain first, then a flexible linker, then the IgG1 heavy chain with CH1-CH3 and the transmembrane tail.",
       "slots": [
         { "kind": "part", "part": "SignalHC" },
-        { "kind": "vl" },
-        { "kind": "light_constant" },
+        { "kind": "light_chain" },
         { "kind": "part", "part": "LinkerSC" },
-        { "kind": "vh" },
-        { "kind": "part", "part": "CHandCTSC" },
+        { "kind": "heavy_chain", "isotype": "igg1" },
+        { "kind": "stop" }
+      ]
+    },
+    "single_chain_bcr_igm": {
+      "label": "Single chain BCR_IGM",
+      "express": true,
+      "description": "Membrane-bound single-chain BCR: the whole light chain first, then a flexible linker, then the IgM heavy chain with CH1-CH4 and the transmembrane tail.",
+      "slots": [
+        { "kind": "part", "part": "SignalHC" },
+        { "kind": "light_chain" },
+        { "kind": "part", "part": "LinkerSC" },
+        { "kind": "heavy_chain", "isotype": "igm" },
+        { "kind": "stop" }
+      ]
+    },
+    "2alinked_igg1": {
+      "label": "2Alinked_IGG1",
+      "express": true,
+      "description": "Two chains from one open reading frame: the IgG1 heavy chain, a furin site and F2A, then the light chain, then T2A and EGFP as a transduction marker.",
+      "slots": [
+        { "kind": "part", "part": "SignalHC" },
+        { "kind": "heavy_chain", "isotype": "igg1" },
+        { "kind": "part", "part": "Furin" },
+        { "kind": "part", "part": "F2A" },
+        { "kind": "part", "part": "SignalLC" },
+        { "kind": "light_chain" },
+        { "kind": "part", "part": "T2A" },
+        { "kind": "part", "part": "EGFP" },
+        { "kind": "stop" }
+      ]
+    },
+    "2alinked_igm": {
+      "label": "2Alinked_IGM",
+      "express": true,
+      "description": "Two chains from one open reading frame: the IgM heavy chain, a furin site and F2A, then the light chain, then T2A and EGFP as a transduction marker.",
+      "slots": [
+        { "kind": "part", "part": "SignalHC" },
+        { "kind": "heavy_chain", "isotype": "igm" },
+        { "kind": "part", "part": "Furin" },
+        { "kind": "part", "part": "F2A" },
+        { "kind": "part", "part": "SignalLC" },
+        { "kind": "light_chain" },
+        { "kind": "part", "part": "T2A" },
+        { "kind": "part", "part": "EGFP" },
         { "kind": "stop" }
       ]
     }

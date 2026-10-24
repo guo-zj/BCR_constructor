@@ -4,11 +4,13 @@
 """
 
 import csv
+import io
 import pathlib
 import shutil
 import tempfile
 import unittest
 
+from bcr import assemble
 from bcr.store import Store
 from bcr.web import create_app
 
@@ -26,6 +28,7 @@ def clean_vrc01():
     }
 
 PARTS = pathlib.Path(__file__).parent / "fixtures" / "parts_sc.fasta"
+RESERVED = pathlib.Path(__file__).parent / "fixtures" / "parts_reserved.fasta"
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "example_input.fasta"
 
 
@@ -108,7 +111,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(row["cl_part"], "IGKC")
         self.assertEqual(row["has_stop"], "yes")
         segments = json.loads(row["segments_json"])
-        self.assertEqual(len(segments), 7)
+        self.assertEqual(len(segments), 5)
         self.assertEqual(segments[0]["label"], "SignalHC")
         self.assertEqual(segments[-1]["end"], len(c.seq))
 
@@ -155,6 +158,22 @@ class CheckAndApproveTests(unittest.TestCase):
         for control in (b'id="seqPath"', b'id="partsBtn"', b'id="draftChain"',
                         b'id="palette"', b'id="processBtn"'):
             self.assertIn(control, page)
+
+    def test_every_table_has_an_editor_slot_outside_the_table(self):
+        """A table re-render must not be able to wipe a form in progress.
+
+        Each editor lives in its own element next to the table rather than
+        inside it, so re-rendering rows leaves a half-typed record alone.
+        """
+        page = self.client.get("/").data.decode()
+        for slot, table in (('id="abEdit"', 'id="abOut"'),
+                            ('id="partEdit"', 'id="partsOut"'),
+                            ('id="conEdit"', 'id="conOut"')):
+            with self.subTest(slot=slot):
+                self.assertIn(slot, page)
+                self.assertLess(page.index(slot), page.index(table))
+        for control in (b'id="abAdd"', b'id="partAdd"'):
+            self.assertIn(control, self.client.get("/").data)
 
     def test_hidden_elements_are_not_defeated_by_a_display_rule(self):
         """An author `display` rule beats the browser's `[hidden]` default.
@@ -209,7 +228,8 @@ class CheckAndApproveTests(unittest.TestCase):
 
     def test_check_reports_chain_type_and_where_to_trim(self):
         data = self.check(VRC01).get_json()
-        self.assertEqual(data["summary"], {"passed": 2, "failed": 0, "ready": 1})
+        self.assertEqual(data["summary"],
+                         {"passed": 2, "failed": 0, "ready": 1, "awaiting": 0})
         by_name = {r["name"]: r for r in data["records"]}
 
         vh = by_name["GL_VRC01_VH"]
@@ -262,7 +282,8 @@ class CheckAndApproveTests(unittest.TestCase):
 
     def test_unpaired_and_failed_chains_cannot_be_added(self):
         data = self.check(FIXTURE).get_json()
-        self.assertEqual(data["summary"], {"passed": 4, "failed": 2, "ready": 1})
+        self.assertEqual(data["summary"],
+                         {"passed": 4, "failed": 2, "ready": 1, "awaiting": 0})
         by_id = {p["id"]: p for p in data["proposals"]}
         self.assertTrue(by_id["mabA"]["ready"])
         self.assertFalse(by_id["mabB"]["ready"])
@@ -364,23 +385,29 @@ class PartsImportTests(unittest.TestCase):
 
     def test_preview_writes_nothing(self):
         self.assertEqual(self.preview(PARTS).status_code, 200)
-        self.assertEqual(
-            self.client.get("/api/library").get_json()["parts"], []
-        )
+        # The intrinsic parts are always listed; nothing of the user's is.
+        rows = self.client.get("/api/library").get_json()["parts"]
+        self.assertEqual([r["name"] for r in rows if not r["builtin"]], [])
 
     def test_everything_is_new_on_an_empty_table(self):
         data = self.preview(PARTS).get_json()
-        self.assertEqual(data["summary"], {"new": 5, "identical": 0, "differs": 0})
+        self.assertEqual(
+            data["summary"],
+            {"new": 8, "identical": 0, "differs": 0, "reserved": 0},
+        )
         self.assertTrue(all(p["status"] == "new" for p in data["parts"]))
 
     def test_reimporting_the_same_file_is_all_identical(self):
         self.apply(PARTS)
         data = self.preview(PARTS).get_json()
-        self.assertEqual(data["summary"], {"new": 0, "identical": 5, "differs": 0})
+        self.assertEqual(
+            data["summary"],
+            {"new": 0, "identical": 8, "differs": 0, "reserved": 0},
+        )
 
     def test_a_changed_part_is_detected_with_its_first_difference(self):
         self.apply(PARTS)
-        alt = self.altered(**{"MGWSCIILFLVATATGVHS": "MGWSCIILFLVATATGVHQ"})
+        alt = self.altered(**{"MEWSWVFLFFLSVTTGVHS": "MEWSWVFLFFLSVTTGVHQ"})
         data = self.preview(alt).get_json()
         self.assertEqual(data["summary"]["differs"], 1)
         signal = next(p for p in data["parts"] if p["name"] == "SignalHC")
@@ -390,7 +417,7 @@ class PartsImportTests(unittest.TestCase):
 
     def test_a_length_change_is_described(self):
         self.apply(PARTS)
-        alt = self.altered(**{"MGWSCIILFLVATATGVHS": "MGWSCIILFLVATATGVHSAA"})
+        alt = self.altered(**{"MEWSWVFLFFLSVTTGVHS": "MEWSWVFLFFLSVTTGVHSAA"})
         signal = next(
             p for p in self.preview(alt).get_json()["parts"] if p["name"] == "SignalHC"
         )
@@ -398,18 +425,18 @@ class PartsImportTests(unittest.TestCase):
 
     def test_default_decision_keeps_the_stored_sequence(self):
         self.apply(PARTS)
-        alt = self.altered(**{"MGWSCIILFLVATATGVHS": "MGWSCIILFLVATATGVHQ"})
+        alt = self.altered(**{"MEWSWVFLFFLSVTTGVHS": "MEWSWVFLFFLSVTTGVHQ"})
         data = self.apply(alt).get_json()  # no decisions given
         outcomes = {a["name"]: a["outcome"] for a in data["applied"]}
         self.assertEqual(outcomes["SignalHC"], "kept original")
         stored = {p["name"]: p["seq"] for p in data["parts"]}
-        self.assertTrue(stored["SignalHC"].endswith("VHS"))
+        self.assertTrue(stored["SignalHC"].endswith("TGVHS"))
 
     def test_override_decision_replaces_only_that_part(self):
         self.apply(PARTS)
         alt = self.altered(
             **{
-                "MGWSCIILFLVATATGVHS": "MGWSCIILFLVATATGVHQ",
+                "MEWSWVFLFFLSVTTGVHS": "MEWSWVFLFFLSVTTGVHQ",
                 "GGSSGSGSGSNWSHPQFEK": "GGSSGSGSGSNWSHPQFEQ",
             }
         )
@@ -421,7 +448,7 @@ class PartsImportTests(unittest.TestCase):
 
         stored = {p["name"]: p["seq"] for p in data["parts"]}
         self.assertIn("QFEQ", stored["LinkerSC"])
-        self.assertTrue(stored["SignalHC"].endswith("VHS"))
+        self.assertTrue(stored["SignalHC"].endswith("TGVHS"))
 
     def test_a_new_part_is_added_without_a_decision(self):
         self.apply(PARTS)
@@ -435,17 +462,908 @@ class PartsImportTests(unittest.TestCase):
 
     def test_an_invalid_parts_file_is_refused_at_preview(self):
         bad = pathlib.Path(self.dir) / "bad.fasta"
-        bad.write_text(">SignalHC\nMGWSCIILFLVATATGVHS\n", encoding="utf-8")
+        bad.write_text(">MyPart\nGGGS123OO!\n", encoding="utf-8")
         res = self.preview(bad)
         self.assertEqual(res.status_code, 400)
         self.assertTrue(res.get_json()["problems"])
 
-    def test_a_part_not_starting_at_its_first_residue_is_refused(self):
-        """Section 6: a constant region starts at its own first residue."""
-        alt = self.altered(**{"RTVAAPSVFIFPPS": "TVAAPSVFIFPPS"})
-        res = self.preview(alt)
+    def test_a_file_asking_for_nothing_in_particular_is_fine(self):
+        """Nothing is demanded of a parts file: the fixed names are intrinsic."""
+        thin = pathlib.Path(self.dir) / "thin.fasta"
+        thin.write_text(">MyLinker\nGGGGSGGGGS\n", encoding="utf-8")
+        res = self.preview(thin)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["summary"]["new"], 1)
+
+    def test_a_reserved_name_is_offered_a_rename_rather_than_imported(self):
+        data = self.preview(RESERVED).get_json()
+        # The ordinary records come through; the reserved ones are set apart.
+        self.assertEqual([p["name"] for p in data["parts"]], ["SignalHC"])
+        by_name = {r["name"]: r for r in data["reserved"]}
+        self.assertEqual(sorted(by_name), ["IGKC", "IGLC2"])
+        # IGLC2 matches the intrinsic sequence, so it needs no rename.
+        self.assertTrue(by_name["IGLC2"]["identical"])
+        self.assertEqual(by_name["IGLC2"]["suggestion"], "")
+        # IGKC differs, so it is the one that has to be renamed.
+        self.assertFalse(by_name["IGKC"]["identical"])
+        self.assertEqual(by_name["IGKC"]["suggestion"], "IGKC_mine")
+        self.assertEqual(data["summary"]["reserved"], 1)
+
+    def test_applying_without_a_rename_skips_the_reserved_record(self):
+        data = self.apply(RESERVED).get_json()
+        outcomes = {a["name"]: a["outcome"] for a in data["applied"]}
+        self.assertEqual(outcomes["IGKC"], "skipped")
+        self.assertEqual(outcomes["IGLC2"], "already intrinsic")
+        self.assertEqual(outcomes["SignalHC"], "added")
+        stored = {p["name"]: p for p in data["parts"]}
+        # The intrinsic IGKC is untouched by the attempt.
+        self.assertEqual(stored["IGKC"]["builtin"], "yes")
+        self.assertEqual(stored["IGKC"]["seq"], assemble.INTRINSIC_SEQS["IGKC"])
+
+    def test_a_rename_imports_the_sequence_under_the_new_name(self):
+        res = self.client.post(
+            "/api/parts/apply",
+            json={"path": str(RESERVED), "renames": {"IGKC": "IGKC_Km3"}},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        outcomes = {a["name"]: a["outcome"] for a in data["applied"]}
+        self.assertEqual(outcomes["IGKC"], "renamed")
+        stored = {p["name"]: p for p in data["parts"]}
+        self.assertIn("IGKC_Km3", stored)
+        self.assertEqual(stored["IGKC_Km3"]["builtin"], "")
+        self.assertEqual(stored["IGKC"]["seq"], assemble.INTRINSIC_SEQS["IGKC"])
+
+    def test_a_rename_onto_another_reserved_name_is_refused(self):
+        data = self.client.post(
+            "/api/parts/apply",
+            json={"path": str(RESERVED), "renames": {"IGKC": "IGLC2"}},
+        ).get_json()
+        entry = next(a for a in data["applied"] if a["name"] == "IGKC")
+        self.assertEqual(entry["outcome"], "skipped")
+        self.assertIn("intrinsic", entry["detail"])
+
+    def test_a_rename_to_an_unusable_name_is_refused(self):
+        data = self.client.post(
+            "/api/parts/apply",
+            json={"path": str(RESERVED), "renames": {"IGKC": "two words"}},
+        ).get_json()
+        entry = next(a for a in data["applied"] if a["name"] == "IGKC")
+        self.assertEqual(entry["outcome"], "skipped")
+
+
+class TrimDecisionTests(unittest.TestCase):
+    """A trim is a modification, so approving a record does not imply it.
+
+    Every record the rules would shorten needs an explicit trim/keep decision;
+    without one the pair is skipped and reported as waiting, never stored
+    under a guess either way.
+    """
+
+    LEADER = "MGWSCIILFLVATATGVHS"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.clean = clean_vrc01()
+
+        # The VRC01 pair with a signal peptide on the heavy chain, so exactly
+        # one of the two records carries a proposed trim.
+        self.path = pathlib.Path(self.dir) / "leader.fasta"
+        self.path.write_text(
+            f">GL_VRC01_VH\n{self.LEADER}{self.clean['GL_VRC01_VH']}\n"
+            f">GL_VRC01_VL\n{self.clean['GL_VRC01_VL']}\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def check(self):
+        return self.client.post("/api/check", json={"path": str(self.path)}).get_json()
+
+    def approve(self, decisions=None):
+        body = {"path": str(self.path), "ids": ["GL_VRC01"]}
+        if decisions is not None:
+            body["decisions"] = decisions
+        return self.client.post("/api/approve", json=body)
+
+    def library(self):
+        return self.client.get("/api/library").get_json()["antibodies"]
+
+    def test_check_flags_which_records_would_be_modified(self):
+        data = self.check()
+        by_name = {r["name"]: r for r in data["records"]}
+        self.assertTrue(by_name["GL_VRC01_VH"]["proposes_trim"])
+        self.assertFalse(by_name["GL_VRC01_VL"]["proposes_trim"])
+        self.assertEqual(data["summary"]["awaiting"], 1)
+
+        (decision,) = data["proposals"][0]["decisions"]
+        self.assertEqual(decision["record"], "GL_VRC01_VH")
+        self.assertEqual(decision["chain"], "VH")
+        self.assertEqual(decision["n"], len(self.LEADER))
+        self.assertEqual(
+            decision["as_given"] - decision["trimmed_to"], len(self.LEADER)
+        )
+
+    def test_approving_without_a_decision_stores_nothing(self):
+        res = self.approve()
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertEqual(body["saved"], [])
+        (skip,) = body["skipped"]
+        self.assertTrue(skip["awaiting"])
+        self.assertIn("GL_VRC01_VH", skip["detail"])
+        self.assertEqual(self.library(), [])
+
+    def test_choosing_trim_stores_the_v_domain(self):
+        body = self.approve({"GL_VRC01_VH": "trim"}).get_json()
+        self.assertEqual(body["saved"][0]["kept"], [])
+        row = self.library()[0]
+        self.assertEqual(row["vh_seq"], self.clean["GL_VRC01_VH"])
+        self.assertNotIn("kept as given", row["vh_trim"])
+
+    def test_choosing_keep_stores_the_sequence_untouched(self):
+        body = self.approve({"GL_VRC01_VH": "keep"}).get_json()
+        self.assertEqual(body["saved"][0]["kept"], ["VH"])
+        row = self.library()[0]
+        self.assertEqual(row["vh_seq"], self.LEADER + self.clean["GL_VRC01_VH"])
+        self.assertIn("kept as given", row["vh_trim"])
+        self.assertIn("not a bare V domain", row["notes"])
+        # The chain that needed no decision is unaffected either way.
+        self.assertEqual(row["vl_seq"], self.clean["GL_VRC01_VL"])
+
+    def test_a_record_needing_no_trim_needs_no_decision(self):
+        res = self.client.post(
+            "/api/approve", json={"path": str(VRC01), "ids": ["GL_VRC01"]}
+        )
+        self.assertEqual([s["id"] for s in res.get_json()["saved"]], ["GL_VRC01"])
+
+    def test_a_decision_must_be_trim_or_keep(self):
+        res = self.approve({"GL_VRC01_VH": "whatever"})
         self.assertEqual(res.status_code, 400)
-        self.assertIn("IGKC", res.get_json()["error"])
+        self.assertEqual(self.library(), [])
+
+
+class EditAntibodyTests(unittest.TestCase):
+    """Hand-entered antibodies go through the same rules as imported ones."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.clean = clean_vrc01()
+        self.vh = self.clean["GL_VRC01_VH"]
+        self.vl = self.clean["GL_VRC01_VL"]
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def save(self, **fields):
+        return self.client.post("/api/antibody/save", json=fields)
+
+    def rows(self):
+        return self.client.get("/api/library").get_json()["antibodies"]
+
+    def test_an_antibody_can_be_added_by_hand(self):
+        res = self.save(id="HandMade", vh_seq=self.vh, vl_seq=self.vl,
+                        user_notes="typed in from a paper")
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertEqual(body["outcome"], "added")
+
+        (row,) = self.rows()
+        self.assertEqual(row["id"], "HandMade")
+        self.assertEqual(row["vh_seq"], self.vh)
+        self.assertEqual(row["light_subclass"], "kappa")
+        self.assertEqual(row["source_file"], "manual entry")
+        # The user's note sits beside the derived warnings, not on top of them.
+        self.assertEqual(row["user_notes"], "typed in from a paper")
+
+    def test_a_whole_fasta_record_can_be_pasted_into_a_field(self):
+        pasted = f">GL_VRC01_VH some description\n{self.vh[:40]}\n{self.vh[40:]}\n"
+        res = self.save(id="Pasted", vh_seq=pasted, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.rows()[0]["vh_seq"], self.vh)
+
+    def test_a_trim_is_offered_rather_than_applied(self):
+        """A pasted sequence is never shortened on the strength of the paste."""
+        raw = "MGWSCIILFLVATATGVHS" + self.vh
+        res = self.save(id="Raw", vh_seq=raw, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertFalse(body["stored"])
+        self.assertEqual(self.rows(), [])          # nothing written
+
+        (pending,) = body["needs_decision"]
+        self.assertEqual(pending["chain"], "VH")
+        self.assertEqual(pending["n"], 19)
+        self.assertEqual(pending["n_seq"], "MGWSCIILFLVATATGVHS")
+
+        res = self.save(id="Raw", vh_seq=raw, vl_seq=self.vl, vh_decision="trim")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.rows()[0]["vh_seq"], self.vh)
+        self.assertTrue(any("trimmed" in n for n in res.get_json()["notes"]))
+
+    def test_a_declined_trim_stores_the_sequence_as_given(self):
+        raw = "MGWSCIILFLVATATGVHS" + self.vh
+        res = self.save(id="Raw", vh_seq=raw, vl_seq=self.vl, vh_decision="keep")
+        self.assertEqual(res.status_code, 200)
+        row = self.rows()[0]
+        self.assertEqual(row["vh_seq"], raw)
+        self.assertEqual(row["vh_len"], str(len(raw)))
+        self.assertIn("kept as given", row["vh_trim"])
+        # FR4 still comes from the detected V end, not the stored tail.
+        self.assertEqual(row["vh_fr4"], self.vh[-11:])
+        self.assertIn("not a bare V domain", row["notes"])
+
+    def test_a_sequence_that_does_not_type_is_refused(self):
+        res = self.save(id="Nope", vh_seq="MKKKWWWQQQ", vl_seq=self.vl)
+        self.assertEqual(res.status_code, 400)
+        self.assertTrue(res.get_json()["problems"])
+        self.assertEqual(self.rows(), [])
+
+    def test_the_id_must_not_carry_a_chain_suffix(self):
+        res = self.save(id="HandMade_VH", vh_seq=self.vh, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("_VH", res.get_json()["error"])
+
+    def test_a_name_that_would_break_a_fasta_header_is_refused(self):
+        for bad in ("two words", "has,comma", "", "-leading"):
+            with self.subTest(name=bad):
+                res = self.save(id=bad, vh_seq=self.vh, vl_seq=self.vl)
+                self.assertEqual(res.status_code, 400)
+
+    def test_both_sequences_are_required(self):
+        res = self.save(id="Half", vh_seq=self.vh, vl_seq="")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("VL", res.get_json()["error"])
+
+    def test_renaming_keeps_one_row_and_repoints_its_constructs(self):
+        self.save(id="Before", vh_seq=self.vh, vl_seq=self.vl)
+        self.client.post("/api/plan", json={"ids": ["Before"]})
+        self.client.post("/api/parts/import", json={"path": str(PARTS)})
+        build = self.client.post(
+            "/api/build",
+            json={"ids": ["Before"], "output": str(pathlib.Path(self.dir) / "out.fasta")},
+        )
+        self.assertEqual(build.status_code, 200)
+
+        res = self.save(old_id="Before", id="After", vh_seq=self.vh, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertEqual(body["outcome"], "renamed")
+        self.assertEqual([r["id"] for r in self.rows()], ["After"])
+        # A construct records what it was built from, so the reference moves too.
+        self.assertEqual(
+            [c["antibody_id"] for c in body["constructs"]], ["After"]
+        )
+        self.assertTrue(any("repointed" in n for n in body["notes"]))
+
+    def test_renaming_onto_an_existing_id_is_refused(self):
+        self.save(id="One", vh_seq=self.vh, vl_seq=self.vl)
+        self.save(id="Two", vh_seq=self.vh, vl_seq=self.vl)
+        res = self.save(old_id="One", id="Two", vh_seq=self.vh, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 409)
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_editing_a_row_that_is_gone_is_refused(self):
+        res = self.save(old_id="Ghost", id="Ghost", vh_seq=self.vh, vl_seq=self.vl)
+        self.assertEqual(res.status_code, 404)
+
+
+class EditPartTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.client.post("/api/parts/import", json={"path": str(PARTS)})
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def save(self, **fields):
+        return self.client.post("/api/part/save", json=fields)
+
+    def parts(self):
+        return {r["name"]: r for r in self.client.get("/api/library").get_json()["parts"]}
+
+    def test_a_part_can_be_added_by_hand_with_its_role_inferred(self):
+        res = self.save(name="FlagTag", seq="GGGSGGGSDYKDDDDK*",
+                        user_notes="C-terminal tag")
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertEqual(body["outcome"], "added")
+
+        row = self.parts()["FlagTag"]
+        # The trailing stop is dropped: parts are residues only.
+        self.assertEqual(row["seq"], "GGGSGGGSDYKDDDDK")
+        self.assertEqual(row["length"], "16")
+        self.assertEqual(row["role"], "other")
+        self.assertEqual(row["user_notes"], "C-terminal tag")
+
+    def test_a_hand_typed_signal_peptide_is_recognised(self):
+        self.save(name="SignalX", seq="MGWSCIILFLVATATGVHS")
+        self.assertEqual(self.parts()["SignalX"]["role"], "signal_peptide")
+
+    def test_a_part_with_an_internal_stop_is_refused(self):
+        res = self.save(name="Broken", seq="GGGS*GGGS")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("truncated", res.get_json()["error"])
+        self.assertNotIn("Broken", self.parts())
+
+    def test_a_part_with_non_amino_acid_characters_is_refused(self):
+        res = self.save(name="Junk", seq="GGGS123OO!")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("non-amino-acid", res.get_json()["error"])
+
+    def test_an_intrinsic_part_cannot_be_saved_over(self):
+        """They ship with the package, so there is nothing here to edit."""
+        for name in sorted(assemble.RESERVED_PART_NAMES):
+            with self.subTest(name=name):
+                res = self.save(name=name, seq="GQPKAAPSVTLFPPSSEELQ")
+                self.assertEqual(res.status_code, 400)
+                self.assertIn("intrinsic", res.get_json()["error"])
+                self.assertEqual(
+                    res.get_json()["reserved"],
+                    sorted(assemble.RESERVED_PART_NAMES),
+                )
+
+    def test_section_six_still_governs_the_intrinsic_constants(self):
+        """Their own starting residues are checked where they are loaded."""
+        _, problems = assemble.validate_part("IGLC2", "QPKAAPSVTLFPPSSEELQ")
+        self.assertTrue(any("GQPKAAPSV" in p for p in problems), problems)
+        _, problems = assemble.validate_part("CHTMCTIgM", "SASAPTLFPLVSC")
+        self.assertTrue(any("GSASAPTLFPLVSC" in p for p in problems), problems)
+
+    def test_renaming_a_part_follows_through_into_saved_layouts(self):
+        slots = [
+            {"kind": "part", "part": "SignalHC"},
+            {"kind": "vl"}, {"kind": "light_constant"},
+            {"kind": "vh"}, {"kind": "stop"},
+        ]
+        saved = self.client.post(
+            "/api/presets/save",
+            json={"label": "Mine", "description": "", "slots": slots},
+        )
+        self.assertEqual(saved.status_code, 200)
+
+        res = self.save(old_name="SignalHC", name="SignalHC2",
+                        seq=self.parts()["SignalHC"]["seq"])
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["outcome"], "renamed")
+        self.assertNotIn("SignalHC", self.parts())
+
+        presets = self.client.get("/api/presets").get_json()["presets"]
+        mine = next(p for p in presets.values() if p["label"] == "Mine")
+        self.assertEqual(
+            [s.get("part") for s in mine["slots"] if s["kind"] == "part"],
+            ["SignalHC2"],
+        )
+        # The built-in layout still asks for the old name, and says so.
+        self.assertTrue(any("built-in" in n for n in res.get_json()["notes"]))
+
+    def test_the_intrinsic_parts_cannot_be_renamed_or_deleted(self):
+        """Layouts resolve to them by name, so the names are fixed."""
+        for name in sorted(assemble.RESERVED_PART_NAMES):
+            with self.subTest(name=name):
+                res = self.save(old_name=name, name=f"{name}_v2",
+                                seq=self.parts()[name]["seq"])
+                self.assertEqual(res.status_code, 400)
+                self.assertIn(name, self.parts())
+
+                res = self.client.post("/api/part/delete", json={"name": name})
+                self.assertEqual(res.status_code, 400)
+                self.assertIn(name, self.parts())
+
+    def test_a_user_part_can_be_saved_over_by_editing_it(self):
+        row = self.parts()["LinkerSC"]
+        # Adding it as if it were new collides, which is the right answer:
+        # it says to edit the stored one rather than silently replacing it.
+        self.assertEqual(self.save(name="LinkerSC", seq=row["seq"]).status_code, 409)
+
+        res = self.save(old_name="LinkerSC", name="LinkerSC", seq=row["seq"],
+                        user_notes="checked against the plasmid map")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["outcome"], "updated")
+        self.assertEqual(
+            self.parts()["LinkerSC"]["user_notes"], "checked against the plasmid map"
+        )
+
+    def test_deleting_a_part_a_layout_needs_says_what_will_break(self):
+        res = self.client.post("/api/part/delete", json={"name": "SignalHC"})
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        self.assertTrue(body["ok"])
+        self.assertNotIn("SignalHC", {r["name"] for r in body["parts"]})
+        self.assertTrue(any("missing part" in n for n in body["notes"]))
+
+    def test_deleting_an_unused_part_is_quiet(self):
+        self.save(name="Spare", seq="GGGSGGGS")
+        res = self.client.post("/api/part/delete", json={"name": "Spare"})
+        self.assertEqual(res.get_json()["notes"], [])
+
+
+class EditConstructTests(unittest.TestCase):
+    """A construct is derived, so only its id and notes are editable."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        clean = clean_vrc01()
+        self.client.post("/api/parts/import", json={"path": str(PARTS)})
+        self.client.post(
+            "/api/antibody/save",
+            json={"id": "GL_VRC01", "vh_seq": clean["GL_VRC01_VH"],
+                  "vl_seq": clean["GL_VRC01_VL"]},
+        )
+        self.client.post(
+            "/api/build",
+            json={"ids": ["GL_VRC01"],
+                  "output": str(pathlib.Path(self.dir) / "out.fasta")},
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def rows(self):
+        return {r["id"]: r for r in self.client.get("/api/constructs").get_json()["constructs"]}
+
+    def test_a_construct_can_be_renamed_and_annotated(self):
+        before = self.rows()["GL_VRC01_BCR"]
+        res = self.client.post(
+            "/api/construct/save",
+            json={"old_id": "GL_VRC01_BCR", "id": "VRC01_scBCR_v1",
+                  "user_notes": "ordered 2026-10-23"},
+        )
+        self.assertEqual(res.status_code, 200)
+        rows = self.rows()
+        self.assertNotIn("GL_VRC01_BCR", rows)
+        row = rows["VRC01_scBCR_v1"]
+        self.assertEqual(row["user_notes"], "ordered 2026-10-23")
+        # Everything derived from the build survives the rename untouched.
+        for field in ("seq", "layout", "segments_json", "residue_count", "preset"):
+            self.assertEqual(row[field], before[field])
+
+    def test_a_construct_cannot_be_typed_in_from_scratch(self):
+        res = self.client.post(
+            "/api/construct/save", json={"id": "Invented", "user_notes": ""}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Assembly layout", res.get_json()["error"])
+
+    def test_renaming_onto_an_existing_construct_is_refused(self):
+        self.client.post(
+            "/api/construct/save",
+            json={"old_id": "GL_VRC01_BCR", "id": "Taken", "user_notes": ""},
+        )
+        self.client.post(
+            "/api/antibody/save",
+            json={"id": "Other", "vh_seq": clean_vrc01()["GL_VRC01_VH"],
+                  "vl_seq": clean_vrc01()["GL_VRC01_VL"]},
+        )
+        self.client.post(
+            "/api/build",
+            json={"ids": ["Other"],
+                  "output": str(pathlib.Path(self.dir) / "out2.fasta")},
+        )
+        res = self.client.post(
+            "/api/construct/save",
+            json={"old_id": "Other_BCR", "id": "Taken", "user_notes": ""},
+        )
+        self.assertEqual(res.status_code, 409)
+
+
+class DerivedChainTests(unittest.TestCase):
+    """Express mode's three columns: whole chains from intrinsic parts."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.clean = clean_vrc01()
+        self.client.post(
+            "/api/antibody/save",
+            json={"id": "GL_VRC01", "vh_seq": self.clean["GL_VRC01_VH"],
+                  "vl_seq": self.clean["GL_VRC01_VL"]},
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def row(self):
+        return self.client.get("/api/library").get_json()["antibodies"][0]
+
+    def test_the_three_columns_are_filled_on_every_write(self):
+        row = self.row()
+        vh, vl = self.clean["GL_VRC01_VH"], self.clean["GL_VRC01_VL"]
+        self.assertEqual(row["light_chain"], vl + assemble.INTRINSIC_SEQS["IGKC"])
+        self.assertEqual(
+            row["heavy_chain_igg1"], vh + assemble.INTRINSIC_SEQS["CHTMCTIgG1"]
+        )
+        self.assertEqual(
+            row["heavy_chain_igm"], vh + assemble.INTRINSIC_SEQS["CHTMCTIgM"]
+        )
+
+    def test_a_lambda_antibody_takes_iglc2(self):
+        """The light chain follows the antibody's own call, per record."""
+        from bcr import chains
+
+        vl = chains.process("x_VL", self.clean["GL_VRC01_VL"]).clean_seq
+        lam = vl[:-1] + "L"
+        self.client.post(
+            "/api/antibody/save",
+            json={"id": "Lam", "vh_seq": self.clean["GL_VRC01_VH"], "vl_seq": lam},
+        )
+        rows = {r["id"]: r for r in self.client.get("/api/library").get_json()["antibodies"]}
+        self.assertEqual(rows["Lam"]["light_subclass"], "lambda")
+        self.assertTrue(
+            rows["Lam"]["light_chain"].endswith(assemble.INTRINSIC_SEQS["IGLC2"])
+        )
+        self.assertTrue(
+            rows["GL_VRC01"]["light_chain"].endswith(assemble.INTRINSIC_SEQS["IGKC"])
+        )
+
+    def test_a_fresh_row_is_not_stale(self):
+        self.assertEqual(self.client.get("/api/library").get_json()["stale_derived"], [])
+
+    def test_stale_columns_are_reported_rather_than_rewritten_on_read(self):
+        """A read must not write: the recompute is offered instead."""
+        store = Store(self.dir)
+        rows = store.antibodies.read()
+        rows[0]["light_chain"] = "WRONG"
+        store.antibodies.write_all(rows)
+
+        data = self.client.get("/api/library").get_json()
+        self.assertEqual(data["stale_derived"], ["GL_VRC01"])
+        # Still wrong on disk: reading reported it, nothing more.
+        self.assertEqual(Store(self.dir).antibodies.read()[0]["light_chain"], "WRONG")
+
+        res = self.client.post("/api/library/derive", json={})
+        self.assertEqual(res.get_json()["changed"], ["GL_VRC01"])
+        self.assertEqual(res.get_json()["stale_derived"], [])
+        self.assertEqual(
+            self.row()["light_chain"],
+            self.clean["GL_VRC01_VL"] + assemble.INTRINSIC_SEQS["IGKC"],
+        )
+
+    def test_recomputing_when_nothing_is_stale_writes_nothing(self):
+        before = (Store(self.dir).antibodies.path).stat().st_mtime_ns
+        res = self.client.post("/api/library/derive", json={})
+        self.assertEqual(res.get_json()["changed"], [])
+        self.assertEqual(
+            (Store(self.dir).antibodies.path).stat().st_mtime_ns, before
+        )
+
+    def test_no_subclass_means_no_light_chain_rather_than_a_guess(self):
+        chains = assemble.derived_chains("QVQLV", "DIQMT", None)
+        self.assertEqual(chains["light_chain"], "")
+        self.assertTrue(chains["heavy_chain_igg1"].startswith("QVQLV"))
+
+
+class ExpressLayoutTests(unittest.TestCase):
+    """The four express layouts, end to end through the web endpoints."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.clean = clean_vrc01()
+        self.client.post("/api/parts/import", json={"path": str(PARTS)})
+        self.client.post(
+            "/api/antibody/save",
+            json={"id": "GL_VRC01", "vh_seq": self.clean["GL_VRC01_VH"],
+                  "vl_seq": self.clean["GL_VRC01_VL"]},
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def express_keys(self):
+        presets = self.client.get("/api/presets").get_json()["presets"]
+        return sorted(k for k, v in presets.items() if v["express"])
+
+    def test_all_four_express_layouts_plan_without_missing_parts(self):
+        keys = self.express_keys()
+        self.assertEqual(len(keys), 4)
+        for key in keys:
+            with self.subTest(preset=key):
+                res = self.client.post(
+                    "/api/plan", json={"ids": ["GL_VRC01"], "preset": key}
+                )
+                self.assertEqual(res.status_code, 200, res.get_json())
+                self.assertEqual(res.get_json()["buildable"], 1)
+
+    def test_the_isotype_reaches_the_plan(self):
+        for key, label in (("single_chain_bcr_igg1", "IgG1"),
+                           ("single_chain_bcr_igm", "IgM")):
+            with self.subTest(preset=key):
+                data = self.client.post(
+                    "/api/plan", json={"ids": ["GL_VRC01"], "preset": key}
+                ).get_json()
+                construct = data["constructs"][0]
+                self.assertEqual(construct["isotype"], label)
+                self.assertEqual(construct["cl_part"], "IGKC")
+
+    def test_an_express_construct_is_the_stored_columns_spliced(self):
+        """What is built must be what express mode showed."""
+        row = self.client.get("/api/library").get_json()["antibodies"][0]
+        out = pathlib.Path(self.dir) / "x.fasta"
+        res = self.client.post(
+            "/api/build",
+            json={"ids": ["GL_VRC01"], "preset": "2alinked_igm", "output": str(out)},
+        )
+        self.assertEqual(res.status_code, 200)
+        seq = res.get_json()["constructs"][0]["preview"] or ""
+        built = {c["id"]: c for c in self.client.get("/api/constructs").get_json()["constructs"]}
+        whole = built["GL_VRC01_BCR"]["seq"]
+        self.assertIn(row["light_chain"], whole)
+        self.assertIn(row["heavy_chain_igm"], whole)
+        self.assertNotIn(row["heavy_chain_igg1"], whole)
+        del seq
+
+    def test_the_igm_and_igg1_forms_differ_only_in_the_heavy_constant(self):
+        out = pathlib.Path(self.dir) / "x.fasta"
+        seqs = {}
+        for key in ("single_chain_bcr_igg1", "single_chain_bcr_igm"):
+            self.client.post(
+                "/api/build",
+                json={"ids": ["GL_VRC01"], "preset": key, "output": str(out)},
+            )
+            rows = {c["id"]: c for c in self.client.get("/api/constructs").get_json()["constructs"]}
+            seqs[key] = rows["GL_VRC01_BCR"]["seq"]
+        igg1, igm = seqs["single_chain_bcr_igg1"], seqs["single_chain_bcr_igm"]
+        self.assertNotEqual(igg1, igm)
+        shared = len(assemble.INTRINSIC_SEQS["CHTMCTIgG1"])
+        self.assertEqual(igg1[: -shared - 1], igm[: -len(assemble.INTRINSIC_SEQS["CHTMCTIgM"]) - 1])
+
+    def test_a_stored_construct_records_the_light_constant(self):
+        out = pathlib.Path(self.dir) / "x.fasta"
+        self.client.post(
+            "/api/build",
+            json={"ids": ["GL_VRC01"], "preset": "single_chain_bcr_igm",
+                  "output": str(out)},
+        )
+        row = self.client.get("/api/constructs").get_json()["constructs"][0]
+        self.assertEqual(row["cl_part"], "IGKC")
+        self.assertEqual(row["preset"], "single_chain_bcr_igm")
+
+    def test_a_layout_cannot_place_a_v_domain_and_a_whole_chain_at_once(self):
+        slots = [
+            {"kind": "vl"}, {"kind": "light_chain"}, {"kind": "stop"},
+        ]
+        res = self.client.post(
+            "/api/presets/save", json={"label": "Doubled", "slots": slots}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("not both", res.get_json()["error"])
+
+    def test_a_light_chain_cannot_be_combined_with_a_light_constant(self):
+        slots = [
+            {"kind": "light_chain"}, {"kind": "light_constant"}, {"kind": "stop"},
+        ]
+        res = self.client.post(
+            "/api/presets/save", json={"label": "Doubled CL", "slots": slots}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("already includes its constant region", res.get_json()["error"])
+
+    def test_a_saved_layout_can_use_the_whole_chain_slots(self):
+        slots = [
+            {"kind": "part", "part": "SignalHC"},
+            {"kind": "heavy_chain", "isotype": "igm"},
+            {"kind": "stop"},
+        ]
+        res = self.client.post(
+            "/api/presets/save", json={"label": "Heavy IgM only", "slots": slots}
+        )
+        self.assertEqual(res.status_code, 200, res.get_json())
+        key = res.get_json()["key"]
+        plan = self.client.post(
+            "/api/plan", json={"ids": ["GL_VRC01"], "preset": key}
+        )
+        self.assertEqual(plan.status_code, 200, plan.get_json())
+        self.assertEqual(plan.get_json()["constructs"][0]["isotype"], "IgM")
+
+
+class ShadowedPartTests(unittest.TestCase):
+    """Rows stored before their names became intrinsic."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.store = Store(self.dir)
+        # Write directly: the endpoints would refuse these names, which is
+        # the point -- only a table that predates them can hold one.
+        self.store.parts.write_all([
+            self.store.part_row("IGKC", assemble.INTRINSIC_SEQS["IGKC"], "old"),
+            self.store.part_row("IGLC2", "GQPKAAPSVTLFPPSSEELQ", "old"),
+            self.store.part_row("SignalHC", "MEWSWVFLFFLSVTTGVHS", "old"),
+        ])
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_a_shadowed_row_is_reported_and_left_out_of_the_table(self):
+        data = self.client.get("/api/library").get_json()
+        listed = {r["name"]: r for r in data["parts"]}
+        self.assertEqual(listed["IGKC"]["builtin"], "yes")
+        self.assertEqual(listed["IGKC"]["seq"], assemble.INTRINSIC_SEQS["IGKC"])
+        shadowed = {r["name"]: r for r in data["shadowed"]}
+        self.assertEqual(sorted(shadowed), ["IGKC", "IGLC2"])
+        self.assertTrue(shadowed["IGKC"]["same"])
+        self.assertFalse(shadowed["IGLC2"]["same"])
+
+    def test_a_shadowed_row_cannot_win_at_assembly(self):
+        """A hand-edited table must not be able to override an intrinsic part."""
+        self.assertEqual(
+            self.store.parts_as_dict()["IGLC2"], assemble.INTRINSIC_SEQS["IGLC2"]
+        )
+
+    def test_shadowed_rows_are_removed_only_when_asked(self):
+        res = self.client.post(
+            "/api/parts/unshadow", json={"names": ["IGKC", "IGLC2"]}
+        )
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(sorted(res.get_json()["removed"]), ["IGKC", "IGLC2"])
+        self.assertEqual(res.get_json()["shadowed"], [])
+        # The user's own row is untouched, and the intrinsic parts remain.
+        names = {r["name"] for r in res.get_json()["parts"]}
+        self.assertIn("SignalHC", names)
+        self.assertTrue(assemble.RESERVED_PART_NAMES <= names)
+
+    def test_unshadow_refuses_a_row_that_is_not_shadowed(self):
+        res = self.client.post("/api/parts/unshadow", json={"names": ["SignalHC"]})
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("SignalHC", {r["name"] for r in self.store.parts.read()})
+
+
+class IntrinsicPartTests(unittest.TestCase):
+    """The shipped parts themselves."""
+
+    def test_the_four_names_are_reserved(self):
+        self.assertEqual(
+            sorted(assemble.RESERVED_PART_NAMES),
+            ["CHTMCTIgG1", "CHTMCTIgM", "IGKC", "IGLC2"],
+        )
+
+    def test_the_light_constants_match_the_knowledge_base(self):
+        """Section 5 is the source; a drift here reaches every plasmid."""
+        from bcr import rules
+
+        self.assertTrue(
+            assemble.INTRINSIC_SEQS["IGKC"].startswith(rules.CL_KAPPA_START)
+        )
+        self.assertEqual(len(assemble.INTRINSIC_SEQS["IGKC"]), 107)
+        self.assertTrue(
+            assemble.INTRINSIC_SEQS["IGLC2"].startswith(rules.CL_LAMBDA_START)
+        )
+        self.assertEqual(len(assemble.INTRINSIC_SEQS["IGLC2"]), 106)
+
+    def test_every_intrinsic_part_has_a_role_read_from_its_sequence(self):
+        for name, value in assemble.BUILTIN_PARTS.items():
+            with self.subTest(name=name):
+                self.assertEqual(value["role"], assemble.infer_role(value["seq"])[0])
+                self.assertNotEqual(value["role"], "other")
+                self.assertTrue(value["description"])
+                self.assertNotIn("*", value["seq"])
+
+    def test_a_damaged_intrinsic_file_is_a_broken_installation(self):
+        """Carrying on with none of them would look like a pile of typos."""
+        import tempfile as tf
+
+        with tf.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            fh.write('{"parts": {}}')
+            path = fh.name
+        with self.assertRaises(RuntimeError):
+            assemble.load_builtin_parts(path)
+
+        with tf.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            fh.write('{"parts": {"IGKC": {"seq": "RTVAAPSVFIFPPS"}}}')
+            path = fh.name
+        with self.assertRaises(RuntimeError) as caught:
+            assemble.load_builtin_parts(path)
+        self.assertIn("missing the intrinsic part", str(caught.exception))
+
+
+class UploadTests(unittest.TestCase):
+    """Dropping a FASTA puts it on disk and hands back its path.
+
+    An upload is deliberately not a third way to submit sequences: it only
+    produces a path, which then goes through the ordinary two-phase flows.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def send(self, filename, data):
+        if isinstance(data, str):
+            data = data.encode()
+        return self.client.post(
+            "/api/upload",
+            data={"file": (io.BytesIO(data), filename)},
+            content_type="multipart/form-data",
+        )
+
+    def test_a_dropped_fasta_lands_in_the_uploads_directory(self):
+        res = self.send("vrc01.fasta", VRC01.read_bytes())
+        self.assertEqual(res.status_code, 200)
+        body = res.get_json()
+        saved = pathlib.Path(body["path"])
+        self.assertEqual(saved.parent, pathlib.Path(self.dir) / "uploads")
+        self.assertEqual(saved.read_bytes(), VRC01.read_bytes())
+        self.assertEqual(body["bytes"], len(VRC01.read_bytes()))
+
+    def test_the_returned_path_drives_the_ordinary_check_flow(self):
+        path = self.send("vrc01.fa", VRC01.read_bytes()).get_json()["path"]
+        res = self.client.post("/api/check", json={"path": path})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json()["summary"]["passed"], 2)
+
+    def test_two_uploads_of_one_name_do_not_overwrite_each_other(self):
+        first = self.send("parts.fasta", ">SignalHC\nMGWSCIILFLVATATGVHS\n")
+        second = self.send("parts.fasta", ">SignalHC\nMGWSCIILFLVATATGVHX\n")
+        a, b = first.get_json()["path"], second.get_json()["path"]
+        self.assertNotEqual(a, b)
+        self.assertTrue(pathlib.Path(a).exists())
+        self.assertTrue(pathlib.Path(b).exists())
+
+    def test_only_fa_and_fasta_are_accepted(self):
+        for name in ("notes.txt", "sequences", "archive.fasta.gz", "x.fa.exe"):
+            with self.subTest(name=name):
+                res = self.send(name, ">A\nQVQ\n")
+                self.assertEqual(res.status_code, 400)
+        self.assertFalse(list((pathlib.Path(self.dir) / "uploads").glob("*"))
+                         if (pathlib.Path(self.dir) / "uploads").exists() else [])
+
+    def test_a_filename_cannot_escape_the_uploads_directory(self):
+        res = self.send("../../../etc/evil.fasta", ">A\nQVQLVQ\n")
+        self.assertEqual(res.status_code, 200)
+        saved = pathlib.Path(res.get_json()["path"])
+        self.assertEqual(saved.parent, pathlib.Path(self.dir) / "uploads")
+        self.assertNotIn("..", saved.name)
+        self.assertEqual(res.get_json()["name"], "evil.fasta")
+
+    def test_something_that_is_not_a_fasta_is_refused(self):
+        res = self.send("mystery.fasta", "QVQLVQSGAEVKKPG\n")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn(">", res.get_json()["error"])
+
+    def test_an_empty_file_is_refused(self):
+        res = self.send("blank.fasta", "   \n")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("empty", res.get_json()["error"].lower())
+
+    def test_a_missing_file_field_is_refused(self):
+        res = self.client.post("/api/upload", data={}, content_type="multipart/form-data")
+        self.assertEqual(res.status_code, 400)
+
+    def test_the_drop_zones_and_naming_example_are_on_the_page(self):
+        page = self.client.get("/").data
+        for control in (b'id="seqDrop"', b'id="seqFile"', b'id="partsDrop"',
+                        b'id="partsFile"', b'accept=".fa,.fasta"'):
+            self.assertIn(control, page)
+        # The naming-rule cartoon, with a text alternative rather than an
+        # image nobody using a screen reader can read.
+        self.assertIn(b"CR9114", page)
+        self.assertIn(b'<figure class="naming">', page)
+        self.assertIn(b"aria-label=", page[page.index(b'<figure class="naming">'):])
 
 
 if __name__ == "__main__":

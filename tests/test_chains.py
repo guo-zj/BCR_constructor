@@ -165,5 +165,51 @@ class HeaderTests(unittest.TestCase):
         self.assertIn("non-amino-acid", r.errors[0])
 
 
+class LongCdr3Tests(unittest.TestCase):
+    """A domain longer than the expected range must not have FR1 amputated.
+
+    `len_range` bounds which start positions are scored at all, so a cap set
+    too tightly does not merely lower confidence -- the true N-terminus is
+    never considered and the best start inside the window cuts into FR1. C05
+    (anti-influenza, 26-residue CDR-H3) is a 138 aa VH that is already clean,
+    and was being trimmed by 15 residues on a medium-confidence call.
+    """
+
+    C05_VH = (
+        "EVQLQESGGGLVQPGESLRLSCVGSGSSFGESTLSYYAVSWVRQAPGKGLEWLSIINAGGGDIDYADS"
+        "VEGRFTISRDNSKETLYLQMTNLRVEDTGVYYCAKHMSMQQVVSAGWERADLVGDAFDVWGQGTMVTVSA"
+    )
+
+    def test_a_long_cdr3_heavy_chain_is_not_trimmed_into_fr1(self):
+        r = chains.process("C05_VH", self.C05_VH)
+        self.assertTrue(r.ok)
+        self.assertEqual(r.detected, "heavy")
+        self.assertEqual(r.n_trimmed, 0)
+        self.assertEqual(r.c_trimmed, 0)
+        self.assertEqual(r.clean_seq, self.C05_VH)
+
+    def test_the_true_n_terminus_wins_on_its_own_anchors(self):
+        r = chains.process("C05_VH", self.C05_VH)
+        self.assertEqual(r.confidence, "high")
+        # The anchors that the amputated start lost: SG at 7 (section 1b) and
+        # the conserved FR1 Cys (section 4 cross-check).
+        self.assertTrue(any("SG at residue 7" in e for e in r.evidence))
+        self.assertTrue(any("FR1 Cys at residue" in e for e in r.evidence))
+
+    def test_an_unusual_length_is_still_reported(self):
+        """Widening the scoring window does not hide the length itself."""
+        r = chains.process("C05_VH", self.C05_VH)
+        self.assertEqual(len(r.clean_seq), 138)
+        self.assertTrue(
+            any("outside the usual 98-128" in w for w in r.warnings), r.warnings
+        )
+
+    def test_the_v_end_rule_is_unchanged_by_the_wider_window(self):
+        """Still Trp + 10: the C-terminal boundary is exact either way."""
+        r = chains.process("C05_VH", self.C05_VH)
+        self.assertTrue(r.clean_seq.endswith("WGQGTMVTVSA"))
+        self.assertEqual(r.v_end, len(self.C05_VH) - 1)
+
+
 if __name__ == "__main__":
     unittest.main()

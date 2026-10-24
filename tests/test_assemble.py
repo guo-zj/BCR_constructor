@@ -10,6 +10,7 @@ from bcr import assemble, chains, read_fasta
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PARTS = pathlib.Path(__file__).parent / "fixtures" / "parts_sc.fasta"
+RESERVED = pathlib.Path(__file__).parent / "fixtures" / "parts_reserved.fasta"
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "example_input.fasta"
 
 
@@ -21,12 +22,15 @@ class PartsTests(unittest.TestCase):
     def test_real_misc_file_validates(self):
         parts, problems = assemble.load_parts(PARTS)
         self.assertEqual(problems, [])
-        for name in assemble.REQUIRED_PARTS:
+        # The intrinsic parts are merged in, so they are available whether or
+        # not the file mentions them -- and it must not.
+        for name in assemble.RESERVED_PART_NAMES:
             self.assertIn(name, parts)
 
     def test_constant_parts_start_at_their_own_first_residue(self):
         """Section 6: start the constant region at its own first residue."""
         parts, _ = assemble.load_parts(PARTS)
+        self.assertTrue(parts["CHTMCTIgM"].startswith("GSASAPTLFPLVSC"))
         self.assertTrue(parts["IGKC"].startswith("RTVAAPSV"))
         self.assertTrue(parts["IGLC2"].startswith("GQPKAAPSV"))
         self.assertTrue(parts["CHandCTSC"].startswith("ASTKGPSVFPLAP"))
@@ -38,42 +42,69 @@ class PartsTests(unittest.TestCase):
         self.assertNotIn("*", parts["CHandCTSC"])
         self.assertEqual(len(parts["CHandCTSC"]), 399)
 
-    def test_only_the_light_constants_are_required(self):
-        """Part names come from the FASTA, so only IGKC/IGLC2 are demanded.
+    def test_nothing_is_demanded_of_a_parts_file(self):
+        """The constant regions are intrinsic, so a parts file owes nothing.
 
-        A layout chooses between those two per antibody, so the code has to
-        know their names; everything else is whatever the file calls it.
+        Part names come from the FASTA and are not known in advance, and the
+        four names the code does need are shipped rather than imported.
         """
         import tempfile
 
         with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fh:
             fh.write(">SignalHC\nMGWSCIILFLVATATGVHS\n")
             path = fh.name
-        _, problems = assemble.load_parts(path)
-        self.assertTrue(any("IGKC" in p for p in problems), problems)
-        self.assertTrue(any("IGLC2" in p for p in problems), problems)
-        # No complaint about a linker or a heavy constant: nothing says a
-        # parts file has to contain one, or what it would be called.
-        self.assertFalse(any("Linker" in p for p in problems), problems)
-        self.assertFalse(any("CHandCT" in p for p in problems), problems)
+        parts, problems = assemble.load_parts(path)
+        self.assertEqual(problems, [])
+        # The intrinsic ones are there regardless of what the file holds.
+        for name in ("IGKC", "IGLC2", "CHTMCTIgG1", "CHTMCTIgM"):
+            self.assertIn(name, parts)
 
     def test_arbitrary_part_names_are_accepted(self):
         import tempfile
 
-        kappa = "RTVAAPSVFIFPPSDEQLK"
-        lam = "GQPKAAPSVTLFPPSSEELQ"
         with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fh:
-            fh.write(f">IGKC\n{kappa}\n>IGLC2\n{lam}\n>whatever_I_like\nGGGGSGGGGS\n")
+            fh.write(">whatever_I_like\nGGGGSGGGGS\n>MyTag2\nDYKDDDDK\n")
             path = fh.name
         parts, problems = assemble.load_parts(path)
         self.assertEqual(problems, [])
         self.assertIn("whatever_I_like", parts)
+        self.assertIn("MyTag2", parts)
+
+    def test_an_intrinsic_name_in_a_file_is_a_problem_not_an_override(self):
+        """Whichever sequence won would be a coin toss to whoever reads it."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fh:
+            fh.write(">IGKC\nRTVAAPSVFIFPPSDEQLK\n")
+            path = fh.name
+        parts, problems = assemble.load_parts(path)
+        self.assertTrue(any("intrinsic" in p and "IGKC" in p for p in problems), problems)
+        # And the intrinsic sequence is what survives, not the file's.
+        self.assertEqual(parts["IGKC"], assemble.INTRINSIC_SEQS["IGKC"])
+
+    def test_an_intrinsic_name_with_the_same_sequence_is_not_a_problem(self):
+        """It overrides nothing, so it is merely redundant."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fh:
+            fh.write(f">IGKC\n{assemble.INTRINSIC_SEQS['IGKC']}\n")
+            path = fh.name
+        _, problems = assemble.load_parts(path)
+        self.assertEqual(problems, [])
+
+    def test_read_parts_file_keeps_reserved_records_apart(self):
+        parts, problems, reserved = assemble.read_parts_file(RESERVED)
+        self.assertEqual(problems, [])
+        self.assertEqual(sorted(parts), ["SignalHC"])
+        self.assertEqual(sorted(reserved), ["IGKC", "IGLC2"])
+        self.assertNotEqual(reserved["IGKC"], assemble.INTRINSIC_SEQS["IGKC"])
+        self.assertEqual(reserved["IGLC2"], assemble.INTRINSIC_SEQS["IGLC2"])
 
     def test_truncated_part_with_internal_stop_is_reported(self):
         import tempfile
 
         with tempfile.NamedTemporaryFile("w", suffix=".fasta", delete=False) as fh:
-            fh.write(">IGKC\nRTVAAPSV*FIFPPSDEQLK\n")
+            fh.write(">MyConstant\nRTVAAPSV*FIFPPSDEQLK\n")
             path = fh.name
         _, problems = assemble.load_parts(path)
         self.assertTrue(
@@ -94,14 +125,37 @@ class BuildTests(unittest.TestCase):
             name, chain_map.get("heavy"), chain_map.get("light"), self.parts
         )
 
-    def test_order_is_signal_vl_cl_linker_vh_chandct(self):
+    def test_default_layout_is_signal_lightchain_linker_heavychain(self):
+        """The shipped default is the express single-chain BCR."""
         c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
         self.assertTrue(c.ok, c.errors)
         labels = [s.label.split(":")[0] for s in c.segments]
-        self.assertEqual(
-            labels,
-            ["SignalHC", "VL", "IGKC", "LinkerSC", "VH", "CHandCTSC", "Stop"],
-        )
+        self.assertEqual(labels, ["SignalHC", "LC", "LinkerSC", "HC", "Stop"])
+
+    def test_the_express_layout_matches_its_explicit_equivalent(self):
+        """light_chain / heavy_chain are shorthand, not a different construct.
+
+        The express slots must assemble exactly what naming VL, the light
+        constant, VH and the CH part by hand would, or the two ways of
+        describing one format would quietly disagree.
+        """
+        results = [r for r in typed(ROOT / "sequences.fasta") if r.ok]
+        chains = assemble.pair_chains(results)["GL_VRC01"]
+        vh, vl = chains["heavy"], chains["light"]
+        explicit = [
+            {"kind": "part", "part": "SignalHC"},
+            {"kind": "vl"},
+            {"kind": "light_constant"},
+            {"kind": "part", "part": "LinkerSC"},
+            {"kind": "vh"},
+            {"kind": "part", "part": "CHTMCTIgG1"},
+            {"kind": "stop"},
+        ]
+        a = assemble.build("GL_VRC01", vh, vl, self.parts, slots=explicit)
+        b = assemble.build("GL_VRC01", vh, vl, self.parts, "single_chain_bcr_igg1")
+        self.assertTrue(a.ok, a.errors)
+        self.assertTrue(b.ok, b.errors)
+        self.assertEqual(a.seq, b.seq)
 
     def test_construct_is_exact_concatenation_of_its_parts(self):
         c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
@@ -142,7 +196,9 @@ class BuildTests(unittest.TestCase):
     def test_kappa_vl_takes_igkc(self):
         c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
         self.assertEqual(c.subclass, "kappa")
-        self.assertIn("IGKC", [s.label for s in c.segments])
+        # The express layout folds the constant region into the light chain,
+        # so it shows in the segment label rather than as a segment of its own.
+        self.assertTrue(any("IGKC" in s.label for s in c.segments))
         self.assertIn(self.parts["IGKC"], c.seq)
         self.assertNotIn(self.parts["IGLC2"], c.seq)
 
@@ -160,7 +216,7 @@ class BuildTests(unittest.TestCase):
         c = assemble.build("chimera", vh, vl, self.parts)
         self.assertTrue(c.ok, c.errors)
         self.assertEqual(c.subclass, "lambda")
-        self.assertIn("IGLC2", [s.label for s in c.segments])
+        self.assertTrue(any("IGLC2" in s.label for s in c.segments))
         self.assertIn(self.parts["IGLC2"], c.seq)
         self.assertNotIn(self.parts["IGKC"], c.seq)
 
