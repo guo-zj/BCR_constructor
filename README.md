@@ -46,7 +46,7 @@ the bottom that opens over the page when clicked:
 | Utilities → Construct parts | Drop or point at the parts FASTA, resolving any conflicts |
 | Utilities → Assembly presets | Build layouts by dragging components into order |
 | 1 · Antibody library | Stored V domains; tick the ones to assemble, or edit them by hand |
-| 2 · Assembly layout | Pick a preset and see the order it will assemble in |
+| 2 · Assembly layout | Tick one or more layouts and see the order each assembles in |
 | 2 · Express mode *(turn the card over)* | Each antibody's whole light and heavy chains, and the four express layouts |
 | 3 · Build plan | Which constant region each antibody gets; confirm to write |
 | 4 · Constructs library | What has been built, with its segment map; rename and annotate |
@@ -58,12 +58,57 @@ rule as a small diagram, if you would rather look than read.
 
 A typical first run: open Utilities, import your parts file, run the sequence
 check and approve the antibodies, close the panel, tick the antibodies in card
-1, review the plan in card 3, and build.
+1, tick the layouts in card 2, review the plan in card 3, and build.
+
+### Building several layouts at once
+
+Layouts are **ticked, not chosen**: card 2 and express mode share one set, so
+a run is a matrix — every ticked antibody under every ticked layout. Four
+antibodies and the four express layouts are sixteen constructs in one pass,
+and the build plan groups them by layout before you confirm.
+
+They all go into one FASTA, so every record carries the build mode in its
+name:
+
+```
+>GL_VRC01_BCR_2alinked_igm      kappa BCR, 1374 aa + stop | 2Alinked_IGM | …
+>GL_VRC01_BCR_single_chain_bcr_igg1   kappa BCR, 806 aa + stop | Single chain BCR_IGG1 | …
+```
+
+`<antibody>_BCR_<layout>` is the construct's id in `constructs.csv` as well,
+so one antibody built four ways keeps four rows rather than overwriting
+itself. Rows built before layouts were named carry the old `<antibody>_BCR`
+id; card 4 points them out and offers to rename them, leaving the sequences
+alone.
 
 Nothing is stored until you approve it, and the two import flows always show
 you what they are about to do first. **Trimming is offered, not applied:** any
 record the rules would shorten gets a trim-or-keep choice of its own, and
 approving leaves it alone until you answer. The server binds `127.0.0.1` only.
+
+### When a record fails the check
+
+Typing is a judgement, and a judgement can be wrong — an engineered format, a
+fragment, a chimera the FR4 regexes do not recognise. So a failed record
+carries an **Add &lt;name&gt; as given anyway** button, and the pair it belongs
+to becomes addable once you press it.
+
+Overruling the check only ever works in one direction: the sequence is stored
+**exactly as it came in**, whole and untrimmed, with no chain class, boundary
+or FR4 derived from it. The chain it goes in as is the one your header claims.
+
+A **light chain is offered as two buttons, κ (IGKC) or λ (IGLC2)**, and will
+not go in without one. κ/λ normally comes from the two checkpoints in section
+3 of the rules, both of which need a V domain boundary — and an overruled
+record has none — so the call is yours to make. The row records that you
+stated it rather than that it was read, and from there the whole light chain
+and the express layouts work as they do for any other antibody. The row records all of this, and the errors that stood are kept as
+warnings, because assembly splices whatever is stored verbatim. The same offer
+appears per chain when you paste a sequence in by hand.
+
+Two failures cannot be overruled, because they are not judgements: a sequence
+holding characters that are not amino acids is not a sequence, and an empty one
+has nothing to store. Both say so instead of offering a button.
 
 ### Command line
 
@@ -83,9 +128,9 @@ python3 -m bcr.cli build sequences.fasta misc_2A.fasta
 
 Assembling constructs: SignalHC | Light chain (VL+CL) | LinkerSC | Heavy chain IgG1 | Stop
 
-  OK    GL_VRC01_BCR: 806 aa + stop (kappa)
+  OK    GL_VRC01_BCR_single_chain_bcr_igg1: 806 aa + stop (kappa)
           layout: SignalHC(19) | LC:GL_VRC01(VL+IGKC)(210) | LinkerSC(57) | HC:GL_VRC01(VH+CHTMCTIgG1)(520) | Stop(1)
-  OK    C05_BCR: 827 aa + stop (kappa)
+  OK    C05_BCR_single_chain_bcr_igg1: 827 aa + stop (kappa)
 ```
 
 Both commands exit non-zero if any record failed, so they can gate a pipeline.
@@ -148,10 +193,10 @@ A hand-typed antibody is held to exactly the same rules as an imported one.
 Paste in a sequence — or a whole FASTA record, header and line breaks
 included — and on save it is typed, trimmed to its V domain, and κ/λ called,
 with the result reported back. A sequence that does not type as a VH/VL pair
-is refused with the reasons, rather than stored as a row nothing else can
-reason about. Parts go through the same checks the parts file does: a trailing
-`*` is dropped, an internal one is a truncation, and a light constant must
-still begin at its own first residue.
+is refused with the reasons — with the option, per chain, of storing it as
+given anyway, exactly as the sanity check offers. Parts go through the same
+checks the parts file does: a trailing `*` is dropped, an internal one is a
+truncation, and a light constant must still begin at its own first residue.
 
 Trimming a pasted sequence is likewise offered rather than done: if the rules
 would shorten it, nothing is saved until you pick trim or keep, with the
@@ -233,7 +278,7 @@ antibody's own `vl` or `vh`, a `light_constant` that resolves per antibody, a
 whole `light_chain` or `heavy_chain` (the shorthand express mode uses), and the
 `stop` codon. Build your own in Utilities → Assembly presets by
 dragging components into order; they are saved to `data/presets.json` and
-become selectable alongside the built-in one.
+become tickable alongside the built-in ones.
 
 If a layout names a part the table does not hold, you get an alert naming it —
 with a "did you mean" suggestion if something close exists — and building is
@@ -249,7 +294,7 @@ what ships, with no code change.
 |---|---|
 | `data/antibodies.csv` | trimmed VH/VL, with chain type, κ/λ, confidence and how much was trimmed |
 | `data/parts.csv` | construct parts, with the role inferred from each sequence |
-| `data/constructs.csv` | assembled constructs and their segment maps |
+| `data/constructs.csv` | assembled constructs and their segment maps, keyed `<antibody>_BCR_<layout>` |
 | `data/presets.json` | layouts you have built |
 | `data/uploads/` | FASTA files you dropped onto the page, kept exactly as given |
 
@@ -292,7 +337,7 @@ and every construct carries a warning saying so.
 python3 -m unittest discover -s tests -t .
 ```
 
-236 tests, no third-party test runner. They cover the counting rules against
+291 tests, no third-party test runner. They cover the counting rules against
 all functional human J segments, the κ/λ hybrid trap, boundary trimming,
 construct assembly, the CSV and JSON stores, and every web endpoint. Test
 inputs are pinned in `tests/fixtures/`, so editing your own working files will

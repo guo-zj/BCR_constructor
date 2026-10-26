@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import unittest
 
-from bcr import assemble
+from bcr import assemble, read_fasta
 from bcr.store import Store
 from bcr.web import create_app
 
@@ -107,7 +107,9 @@ class StoreTests(unittest.TestCase):
             "GL_VRC01", clean["GL_VRC01_VH"], clean["GL_VRC01_VL"], "kappa", parts
         )
         row = self.store.construct_row(c, "single_chain_bcr", "out.fasta")
-        self.assertEqual(row["id"], "GL_VRC01_BCR")
+        # The layout is part of the name: one antibody can be built several
+        # ways into one file.
+        self.assertEqual(row["id"], "GL_VRC01_BCR_single_chain_bcr")
         self.assertEqual(row["cl_part"], "IGKC")
         self.assertEqual(row["has_stop"], "yes")
         segments = json.loads(row["segments_json"])
@@ -213,6 +215,29 @@ class CheckAndApproveTests(unittest.TestCase):
                         f"so it needs a {selector}[hidden] rule",
                     )
 
+    def test_the_scripts_block_comments_are_balanced(self):
+        """A stray `*/` silently kills the whole script, and nothing else here
+        would notice: there is no JS engine on this machine, so the page is
+        never parsed. Markers must strictly alternate `/* … */`, which catches
+        both an early close left behind by an edit and an unterminated comment.
+        Nothing in the script holds either marker inside a string, and this
+        test is the reason to keep it that way.
+        """
+        import re
+
+        page = self.client.get("/").data.decode()
+        js = page[page.rindex("<script>") + len("<script>"):page.rindex("</script>")]
+        depth = 0
+        for match in re.finditer(r"/\*|\*/", js):
+            line = js.count("\n", 0, match.start()) + 1
+            if match.group() == "/*":
+                self.assertEqual(depth, 0, f"nested /* in the script, line {line}")
+                depth = 1
+            else:
+                self.assertEqual(depth, 1, f"unmatched */ in the script, line {line}")
+                depth = 0
+        self.assertEqual(depth, 0, "the script ends inside a block comment")
+
     def test_input_cards_are_not_in_the_main_flow(self):
         """They moved into the panel, so the page body no longer holds them."""
         page = self.client.get("/").data.decode()
@@ -229,7 +254,7 @@ class CheckAndApproveTests(unittest.TestCase):
     def test_check_reports_chain_type_and_where_to_trim(self):
         data = self.check(VRC01).get_json()
         self.assertEqual(data["summary"],
-                         {"passed": 2, "failed": 0, "ready": 1, "awaiting": 0})
+                         {"passed": 2, "failed": 0, "as_given": 0, "ready": 1, "awaiting": 0})
         by_name = {r["name"]: r for r in data["records"]}
 
         vh = by_name["GL_VRC01_VH"]
@@ -283,7 +308,7 @@ class CheckAndApproveTests(unittest.TestCase):
     def test_unpaired_and_failed_chains_cannot_be_added(self):
         data = self.check(FIXTURE).get_json()
         self.assertEqual(data["summary"],
-                         {"passed": 4, "failed": 2, "ready": 1, "awaiting": 0})
+                         {"passed": 4, "failed": 2, "as_given": 0, "ready": 1, "awaiting": 0})
         by_id = {p["id"]: p for p in data["proposals"]}
         self.assertTrue(by_id["mabA"]["ready"])
         self.assertFalse(by_id["mabB"]["ready"])
@@ -916,15 +941,16 @@ class EditConstructTests(unittest.TestCase):
         return {r["id"]: r for r in self.client.get("/api/constructs").get_json()["constructs"]}
 
     def test_a_construct_can_be_renamed_and_annotated(self):
-        before = self.rows()["GL_VRC01_BCR"]
+        built_id = Store.construct_id("GL_VRC01", assemble.DEFAULT_PRESET)
+        before = self.rows()[built_id]
         res = self.client.post(
             "/api/construct/save",
-            json={"old_id": "GL_VRC01_BCR", "id": "VRC01_scBCR_v1",
+            json={"old_id": built_id, "id": "VRC01_scBCR_v1",
                   "user_notes": "ordered 2026-10-23"},
         )
         self.assertEqual(res.status_code, 200)
         rows = self.rows()
-        self.assertNotIn("GL_VRC01_BCR", rows)
+        self.assertNotIn(built_id, rows)
         row = rows["VRC01_scBCR_v1"]
         self.assertEqual(row["user_notes"], "ordered 2026-10-23")
         # Everything derived from the build survives the rename untouched.
@@ -941,7 +967,8 @@ class EditConstructTests(unittest.TestCase):
     def test_renaming_onto_an_existing_construct_is_refused(self):
         self.client.post(
             "/api/construct/save",
-            json={"old_id": "GL_VRC01_BCR", "id": "Taken", "user_notes": ""},
+            json={"old_id": Store.construct_id("GL_VRC01", assemble.DEFAULT_PRESET),
+                  "id": "Taken", "user_notes": ""},
         )
         self.client.post(
             "/api/antibody/save",
@@ -955,7 +982,8 @@ class EditConstructTests(unittest.TestCase):
         )
         res = self.client.post(
             "/api/construct/save",
-            json={"old_id": "Other_BCR", "id": "Taken", "user_notes": ""},
+            json={"old_id": Store.construct_id("Other", assemble.DEFAULT_PRESET),
+                  "id": "Taken", "user_notes": ""},
         )
         self.assertEqual(res.status_code, 409)
 
@@ -1104,7 +1132,7 @@ class ExpressLayoutTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         seq = res.get_json()["constructs"][0]["preview"] or ""
         built = {c["id"]: c for c in self.client.get("/api/constructs").get_json()["constructs"]}
-        whole = built["GL_VRC01_BCR"]["seq"]
+        whole = built[Store.construct_id("GL_VRC01", "2alinked_igm")]["seq"]
         self.assertIn(row["light_chain"], whole)
         self.assertIn(row["heavy_chain_igm"], whole)
         self.assertNotIn(row["heavy_chain_igg1"], whole)
@@ -1119,7 +1147,7 @@ class ExpressLayoutTests(unittest.TestCase):
                 json={"ids": ["GL_VRC01"], "preset": key, "output": str(out)},
             )
             rows = {c["id"]: c for c in self.client.get("/api/constructs").get_json()["constructs"]}
-            seqs[key] = rows["GL_VRC01_BCR"]["seq"]
+            seqs[key] = rows[Store.construct_id("GL_VRC01", key)]["seq"]
         igg1, igm = seqs["single_chain_bcr_igg1"], seqs["single_chain_bcr_igm"]
         self.assertNotEqual(igg1, igm)
         shared = len(assemble.INTRINSIC_SEQS["CHTMCTIgG1"])
@@ -1368,3 +1396,631 @@ class UploadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AddAnywayTests(unittest.TestCase):
+    """A sanity-check failure is a judgement, and it can be overruled.
+
+    Overruling only ever stores the sequence exactly as it came in: nothing is
+    derived from it, and the row says as much. The two failures that are not
+    judgements -- a sequence that is not amino acids, an empty one -- cannot be
+    overruled at all.
+    """
+
+    ANYWAY = pathlib.Path(__file__).parent / "fixtures" / "add_anyway.fasta"
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.clean = clean_vrc01()
+        self.records = {
+            r.name: r.seq for r in read_fasta(self.ANYWAY)
+        }
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_overruling_re_renders_without_losing_the_reading_position(self):
+        """Pressing "add anyway" must leave the panel where it stands.
+
+        The handler re-runs the check rather than patching the view, so the
+        whole block is replaced. Emptying it first collapses the panel body and
+        its scroll offset clamps to zero, which throws the user back to the top
+        of a long file. So the re-run is quiet -- no "Processing…" placeholder
+        -- and the offset is captured and restored around it.
+        """
+        page = self.client.get("/").data.decode()
+        handler = page[page.index('querySelectorAll("[data-anyway]")'):]
+        handler = handler[:handler.index("[data-unanyway]")]
+        self.assertIn('holdScroll($("checkOut"))', page)
+        self.assertIn("runCheck({ quiet: true })", page)
+        self.assertNotIn("Processing", handler)
+
+        run = page[page.index("async function runCheck"):]
+        run = run[:run.index("\n}")]
+        self.assertIn("if (!opts.quiet)", run)
+        self.assertIn("Processing", run)
+
+        self.assertIn("function holdScroll(el)", page)
+
+    def check(self, **extra):
+        return self.client.post(
+            "/api/check", json={"path": str(self.ANYWAY), **extra}
+        ).get_json()
+
+    def rows(self):
+        return self.client.get("/api/library").get_json()["antibodies"]
+
+    # --- the offer --------------------------------------------------------
+
+    def test_a_failed_record_is_offered_as_given(self):
+        body = self.check()
+        failed = next(r for r in body["records"] if r["status"] == "fail")
+        self.assertEqual(failed["name"], "mabX_VH")
+        self.assertTrue(failed["add_anyway"])
+        self.assertEqual(failed["add_anyway_chain"], "heavy")
+        self.assertEqual(failed["add_anyway_blocked"], "")
+        # and the pair is not addable while the failure stands
+        (proposal,) = body["proposals"]
+        self.assertFalse(proposal["ready"])
+
+    def test_a_passing_record_is_not_offered_anything(self):
+        passed = next(r for r in self.check()["records"] if r["status"] == "ok")
+        self.assertFalse(passed["add_anyway"])
+        self.assertFalse(passed["accepted_as_given"])
+
+    def test_non_amino_acid_characters_cannot_be_overruled(self):
+        path = pathlib.Path(self.dir) / "junk.fasta"
+        path.write_text(">junk_VH\nQVQLZZ123X@@\n", encoding="utf-8")
+        body = self.client.post("/api/check", json={"path": str(path)}).get_json()
+        (record,) = body["records"]
+        self.assertFalse(record["add_anyway"])
+        self.assertIn("not amino acids", record["add_anyway_blocked"])
+
+        res = self.client.post(
+            "/api/check", json={"path": str(path), "overrides": ["junk_VH"]}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("cannot be stored as given", res.get_json()["error"])
+
+    def test_an_unlabelled_untypable_record_cannot_be_overruled(self):
+        """With no _VH/_VL suffix and no detected class, nothing says which
+        chain it is, so there is no slot to store it in."""
+        path = pathlib.Path(self.dir) / "nameless.fasta"
+        path.write_text(">mystery\nMVSKGEELFTGVVPILVELDGDVNGHKFSVSG\n",
+                        encoding="utf-8")
+        (record,) = self.client.post(
+            "/api/check", json={"path": str(path)}
+        ).get_json()["records"]
+        self.assertFalse(record["add_anyway"])
+        self.assertIn("_VH/_VL", record["add_anyway_blocked"])
+
+    # --- overruling it ----------------------------------------------------
+
+    def test_overruling_makes_the_pair_addable(self):
+        body = self.check(overrides=["mabX_VH"])
+        record = next(r for r in body["records"] if r["name"] == "mabX_VH")
+        self.assertEqual(record["status"], "ok")
+        self.assertTrue(record["accepted_as_given"])
+        self.assertEqual(record["confidence"], "none")
+        self.assertEqual(record["length"], len(self.records["mabX_VH"]))
+        self.assertEqual(body["summary"]["ready"], 1)
+
+        (proposal,) = body["proposals"]
+        self.assertTrue(proposal["ready"])
+        self.assertEqual(proposal["accepted_as_given"], ["VH"])
+        # overruling the check is not a trim decision: nothing was trimmed
+        self.assertEqual(proposal["decisions"], [])
+
+    def test_check_still_writes_nothing(self):
+        self.check(overrides=["mabX_VH"])
+        self.assertEqual(self.rows(), [])
+
+    def test_approve_stores_the_sequence_exactly_as_given(self):
+        self.check(overrides=["mabX_VH"])
+        body = self.client.post("/api/approve", json={
+            "path": str(self.ANYWAY),
+            "ids": ["mabX"],
+            "overrides": ["mabX_VH"],
+        }).get_json()
+        (saved,) = body["saved"]
+        self.assertEqual(saved["as_given"], ["VH"])
+
+        (row,) = self.rows()
+        self.assertEqual(row["vh_seq"], self.records["mabX_VH"])
+        self.assertEqual(row["vh_confidence"], "none")
+        self.assertIn("failed the sanity check", row["vh_trim"])
+        # nothing was derived, so the derived columns say nothing
+        self.assertEqual(row["vh_fr4"], "")
+        self.assertIn("stored as given", row["notes"])
+        # the half that typed normally is untouched by any of this
+        self.assertEqual(row["vl_seq"], self.records["mabX_VL"])
+        self.assertEqual(row["vl_confidence"], "high")
+
+    def test_approve_without_the_override_refuses_the_pair(self):
+        """The override travels with the request. Approving without it leaves
+        the file typing exactly as the rules say, so there is no pair."""
+        body = self.client.post("/api/approve", json={
+            "path": str(self.ANYWAY), "ids": ["mabX"],
+        }).get_json()
+        self.assertEqual(body["saved"], [])
+        (skipped,) = body["skipped"]
+        self.assertIn("failed the sanity check", skipped["detail"])
+        self.assertEqual(self.rows(), [])
+
+    def test_an_override_naming_a_record_not_in_the_file_is_an_error(self):
+        res = self.client.post(
+            "/api/check", json={"path": str(self.ANYWAY), "overrides": ["nope_VH"]}
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("no such record", res.get_json()["error"])
+
+    def test_overrides_must_be_a_list(self):
+        for url in ("/api/check", "/api/approve"):
+            res = self.client.post(url, json={
+                "path": str(self.ANYWAY), "ids": ["mabX"], "overrides": "mabX_VH",
+            })
+            self.assertEqual(res.status_code, 400)
+            self.assertIn("must be a list", res.get_json()["error"])
+
+    def test_an_overruled_record_still_passes_typing_for_the_record_view(self):
+        """Overruling does not rewrite history: the errors that stood are
+        still reported, as warnings, on the record and in the stored row."""
+        record = next(
+            r for r in self.check(overrides=["mabX_VH"])["records"]
+            if r["name"] == "mabX_VH"
+        )
+        self.assertEqual(record["errors"], [])
+        self.assertTrue(any("framework 4" in w for w in record["warnings"]))
+        self.assertTrue(any("verbatim" in w for w in record["warnings"]))
+
+    # --- the hand editor --------------------------------------------------
+
+    def test_a_pasted_chain_that_fails_is_offered_as_given(self):
+        res = self.client.post("/api/antibody/save", json={
+            "id": "Pasted",
+            "vh_seq": self.records["mabX_VH"],
+            "vl_seq": self.clean["GL_VRC01_VL"],
+        })
+        self.assertEqual(res.status_code, 400)
+        body = res.get_json()
+        (offer,) = body["add_anyway"]
+        self.assertEqual(offer["chain"], "VH")
+        self.assertEqual(offer["field"], "vh_as_given")
+        self.assertTrue(offer["can"])
+        self.assertEqual(offer["as_given"], len(self.records["mabX_VH"]))
+        self.assertEqual(self.rows(), [])
+
+    def test_saying_so_stores_the_pasted_chain_as_given(self):
+        res = self.client.post("/api/antibody/save", json={
+            "id": "Pasted",
+            "vh_seq": self.records["mabX_VH"],
+            "vl_seq": self.clean["GL_VRC01_VL"],
+            "vh_as_given": True,
+        })
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(any("as given" in n for n in res.get_json()["notes"]))
+
+        (row,) = self.rows()
+        self.assertEqual(row["vh_seq"], self.records["mabX_VH"])
+        self.assertEqual(row["vh_confidence"], "none")
+
+    def test_the_flag_is_per_chain(self):
+        """Insisting on the heavy chain says nothing about the light one."""
+        res = self.client.post("/api/antibody/save", json={
+            "id": "Pasted",
+            "vh_seq": self.records["mabX_VH"],
+            "vl_seq": self.records["mabX_VH"],   # not a light chain either
+            "vh_as_given": True,
+        })
+        self.assertEqual(res.status_code, 400)
+        (offer,) = res.get_json()["add_anyway"]
+        self.assertEqual(offer["chain"], "VL")
+        self.assertEqual(self.rows(), [])
+
+    def test_the_summary_does_not_count_an_overruled_record_as_passing(self):
+        body = self.check(overrides=["mabX_VH"])
+        self.assertEqual(body["summary"]["passed"], 1)
+        self.assertEqual(body["summary"]["failed"], 0)
+        self.assertEqual(body["summary"]["as_given"], 1)
+
+    # --- a light chain needs kappa or lambda stated ------------------------
+
+    def light_pair(self):
+        """A clean VH beside a light record the rules reject. The light half
+        is the one that cannot be stored without a kappa/lambda call."""
+        path = pathlib.Path(self.dir) / "light.fasta"
+        path.write_text(
+            f">mabY_VH\n{self.clean['GL_VRC01_VH']}\n"
+            f">mabY_VL\n{self.records['mabX_VH']}\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_a_failed_light_chain_is_offered_both_subclasses(self):
+        path = self.light_pair()
+        body = self.client.post("/api/check", json={"path": str(path)}).get_json()
+        failed = next(r for r in body["records"] if r["status"] == "fail")
+        self.assertEqual(failed["name"], "mabY_VL")
+        self.assertTrue(failed["add_anyway"])
+        self.assertEqual(failed["add_anyway_chain"], "light")
+        self.assertEqual(failed["add_anyway_subclasses"], ["kappa", "lambda"])
+
+    def test_a_failed_heavy_chain_is_offered_no_subclass(self):
+        failed = next(r for r in self.check()["records"] if r["status"] == "fail")
+        self.assertEqual(failed["add_anyway_chain"], "heavy")
+        self.assertEqual(failed["add_anyway_subclasses"], [])
+
+    def test_overruling_a_light_chain_without_saying_which_is_refused(self):
+        path = self.light_pair()
+        for url, extra in (
+            ("/api/check", {}),
+            ("/api/approve", {"ids": ["mabY"]}),
+        ):
+            with self.subTest(url=url):
+                res = self.client.post(url, json={
+                    "path": str(path), "overrides": ["mabY_VL"], **extra,
+                })
+                self.assertEqual(res.status_code, 400)
+                self.assertIn("kappa or lambda", res.get_json()["error"])
+        self.assertEqual(self.rows(), [])
+
+    def test_a_stated_subclass_chooses_the_constant_region(self):
+        path = self.light_pair()
+        body = self.client.post("/api/check", json={
+            "path": str(path),
+            "overrides": ["mabY_VL"],
+            "subclasses": {"mabY_VL": "lambda"},
+        }).get_json()
+        record = next(r for r in body["records"] if r["name"] == "mabY_VL")
+        self.assertEqual(record["subclass"], "lambda")
+        (proposal,) = body["proposals"]
+        self.assertTrue(proposal["ready"])
+        self.assertEqual(proposal["subclass"], "lambda")
+
+        self.client.post("/api/approve", json={
+            "path": str(path),
+            "ids": ["mabY"],
+            "overrides": ["mabY_VL"],
+            "subclasses": {"mabY_VL": "lambda"},
+        })
+        (row,) = self.rows()
+        self.assertEqual(row["light_subclass"], "lambda")
+        # the whole light chain is derivable again, with the CL the user named
+        self.assertEqual(
+            row["light_chain"],
+            self.records["mabX_VH"] + assemble.INTRINSIC_SEQS["IGLC2"],
+        )
+        self.assertTrue(any("stated by you" in n for n in row["notes"].split("; ")),
+                        row["notes"])
+
+    def test_kappa_takes_igkc(self):
+        path = self.light_pair()
+        self.client.post("/api/approve", json={
+            "path": str(path),
+            "ids": ["mabY"],
+            "overrides": ["mabY_VL"],
+            "subclasses": {"mabY_VL": "kappa"},
+        })
+        (row,) = self.rows()
+        self.assertEqual(row["light_subclass"], "kappa")
+        self.assertTrue(
+            row["light_chain"].endswith(assemble.INTRINSIC_SEQS["IGKC"])
+        )
+
+    def test_a_subclass_that_is_neither_is_refused(self):
+        path = self.light_pair()
+        res = self.client.post("/api/check", json={
+            "path": str(path),
+            "overrides": ["mabY_VL"],
+            "subclasses": {"mabY_VL": "IGKC"},
+        })
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("kappa or lambda, not 'igkc'", res.get_json()["error"])
+
+    def test_subclasses_must_be_an_object(self):
+        res = self.client.post("/api/check", json={
+            "path": str(self.ANYWAY), "subclasses": ["kappa"],
+        })
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("must be an object", res.get_json()["error"])
+
+    def test_the_hand_editor_asks_which_subclass_before_storing(self):
+        res = self.client.post("/api/antibody/save", json={
+            "id": "Pasted",
+            "vh_seq": self.clean["GL_VRC01_VH"],
+            "vl_seq": self.records["mabX_VH"],
+            "vl_as_given": True,          # yes, but not which
+        })
+        self.assertEqual(res.status_code, 400)
+        (offer,) = res.get_json()["add_anyway"]
+        self.assertEqual(offer["chain"], "VL")
+        self.assertTrue(offer["can"])
+        self.assertEqual(offer["subclasses"], ["kappa", "lambda"])
+        self.assertEqual(self.rows(), [])
+
+    def test_the_hand_editor_takes_the_subclass_in_the_flag(self):
+        res = self.client.post("/api/antibody/save", json={
+            "id": "Pasted",
+            "vh_seq": self.clean["GL_VRC01_VH"],
+            "vl_seq": self.records["mabX_VH"],
+            "vl_as_given": "kappa",
+        })
+        self.assertEqual(res.status_code, 200)
+        (row,) = self.rows()
+        self.assertEqual(row["light_subclass"], "kappa")
+        self.assertEqual(row["vl_confidence"], "none")
+
+
+class MultiLayoutBuildTests(unittest.TestCase):
+    """One run, several layouts.
+
+    The build mode is part of every construct name, so a run that builds the
+    same antibody four ways writes four records to one file and keeps four
+    rows, none of them shadowing another.
+    """
+
+    EXPRESS = ("single_chain_bcr_igg1", "single_chain_bcr_igm",
+               "2alinked_igg1", "2alinked_igm")
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.out = self.dir / "built.fasta"
+        self.client.post("/api/parts/apply", json={"path": str(PARTS)})
+        self.client.post("/api/check", json={"path": str(VRC01)})
+        self.client.post("/api/approve",
+                         json={"path": str(VRC01), "ids": ["GL_VRC01"]})
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def plan(self, **fields):
+        return self.client.post("/api/plan", json={"ids": ["GL_VRC01"], **fields})
+
+    def build(self, **fields):
+        return self.client.post(
+            "/api/build",
+            json={"ids": ["GL_VRC01"], "output": str(self.out), **fields},
+        )
+
+    def test_a_plan_covers_every_layout_asked_for(self):
+        body = self.plan(presets=list(self.EXPRESS)).get_json()
+        self.assertEqual(body["buildable"], 4)
+        self.assertEqual(len(body["constructs"]), 4)
+        self.assertEqual([p["key"] for p in body["presets"]], list(self.EXPRESS))
+        self.assertEqual([p["buildable"] for p in body["presets"]], [1, 1, 1, 1])
+        # every planned construct says which layout it is and what it will
+        # be called
+        for entry in body["constructs"]:
+            self.assertIn(entry["preset"], self.EXPRESS)
+            self.assertEqual(
+                entry["construct_id"],
+                Store.construct_id("GL_VRC01", entry["preset"]),
+            )
+
+    def test_the_matrix_is_antibodies_times_layouts(self):
+        clean = clean_vrc01()
+        self.client.post("/api/antibody/save", json={
+            "id": "Second", "vh_seq": clean["GL_VRC01_VH"],
+            "vl_seq": clean["GL_VRC01_VL"],
+        })
+        body = self.client.post("/api/plan", json={
+            "ids": ["GL_VRC01", "Second"], "presets": list(self.EXPRESS[:2]),
+        }).get_json()
+        self.assertEqual(len(body["constructs"]), 4)
+        self.assertEqual(body["buildable"], 4)
+
+    def test_one_run_writes_one_record_per_layout(self):
+        body = self.build(presets=list(self.EXPRESS)).get_json()
+        self.assertEqual(body["written"], 4)
+        self.assertEqual([p["written"] for p in body["by_preset"]], [1, 1, 1, 1])
+
+        written = read_fasta(self.out)
+        self.assertEqual(len(written), 4)
+        names = [r.name for r in written]
+        self.assertEqual(
+            names, [Store.construct_id("GL_VRC01", k) for k in self.EXPRESS]
+        )
+        # the whole point: unique names in one file
+        self.assertEqual(len(set(names)), 4)
+        # and four distinct sequences, each ending in exactly one stop
+        self.assertEqual(len({r.seq for r in written}), 4)
+        for record in written:
+            self.assertTrue(record.seq.endswith("*"))
+            self.assertEqual(record.seq.count("*"), 1)
+
+    def test_the_build_mode_is_in_the_fasta_description_too(self):
+        self.build(presets=["single_chain_bcr_igm"])
+        (record,) = read_fasta(self.out)
+        self.assertIn("Single chain BCR_IGM", record.description)
+
+    def test_each_layout_keeps_its_own_row(self):
+        self.build(presets=list(self.EXPRESS))
+        rows = {
+            c["id"]: c
+            for c in self.client.get("/api/constructs").get_json()["constructs"]
+        }
+        self.assertEqual(len(rows), 4)
+        for key in self.EXPRESS:
+            row = rows[Store.construct_id("GL_VRC01", key)]
+            self.assertEqual(row["preset"], key)
+            self.assertEqual(row["antibody_id"], "GL_VRC01")
+
+    def test_rebuilding_the_same_layouts_updates_rather_than_duplicates(self):
+        self.build(presets=list(self.EXPRESS))
+        body = self.build(presets=list(self.EXPRESS)).get_json()
+        self.assertEqual(len(body["library"]), 4)
+        self.assertEqual(body["replaced"], 4)
+        self.assertEqual(len(read_fasta(self.out)), 4)
+
+    def test_a_single_layout_run_is_unchanged(self):
+        """The one-layout case still answers in the flat shape it always did."""
+        body = self.plan(preset="single_chain_bcr_igm").get_json()
+        self.assertEqual(body["preset"], "single_chain_bcr_igm")
+        self.assertEqual(body["preset_label"], "Single chain BCR_IGM")
+        self.assertEqual(len(body["constructs"]), 1)
+
+    def test_a_run_of_several_names_no_single_preset(self):
+        body = self.plan(presets=list(self.EXPRESS[:2])).get_json()
+        self.assertEqual(body["preset"], "")
+        self.assertEqual(body["preset_label"], "")
+
+    def test_the_same_layout_twice_is_built_once(self):
+        body = self.build(presets=["2alinked_igg1", "2alinked_igg1"]).get_json()
+        self.assertEqual(body["written"], 1)
+
+    def test_an_unknown_layout_in_the_list_stops_the_run(self):
+        for url in ("/api/plan", "/api/build"):
+            with self.subTest(url=url):
+                res = self.client.post(url, json={
+                    "ids": ["GL_VRC01"],
+                    "presets": ["single_chain_bcr_igg1", "nonesuch"],
+                    "output": str(self.out),
+                })
+                self.assertEqual(res.status_code, 400)
+                self.assertIn("nonesuch", res.get_json()["error"])
+        self.assertFalse(self.out.exists())
+
+    def test_an_empty_layout_list_is_refused(self):
+        res = self.plan(presets=[])
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("No layout selected", res.get_json()["error"])
+
+    def test_presets_must_be_a_list(self):
+        res = self.plan(presets="single_chain_bcr_igg1")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("must be a list", res.get_json()["error"])
+
+    def test_a_layout_missing_parts_stops_the_whole_run(self):
+        """Not a silent omission: the user picked that layout on purpose."""
+        slots = [{"kind": "part", "part": "Nowhere"},
+                 {"kind": "light_chain"}, {"kind": "stop"}]
+        saved = self.client.post("/api/presets/save", json={
+            "label": "Needs a missing part", "slots": slots,
+        })
+        key = saved.get_json()["key"]
+        res = self.plan(presets=["single_chain_bcr_igg1", key])
+        self.assertEqual(res.status_code, 400)
+        body = res.get_json()
+        self.assertIn("Nowhere", body["error"])
+        self.assertIn(key, body["missing_by_preset"])
+        self.assertNotIn("single_chain_bcr_igg1", body["missing_by_preset"])
+
+    def test_skipped_entries_say_which_layout_they_were_for(self):
+        body = self.client.post("/api/build", json={
+            "ids": ["GL_VRC01", "nope"],
+            "presets": ["single_chain_bcr_igg1", "single_chain_bcr_igm"],
+            "output": str(self.out),
+        }).get_json()
+        self.assertEqual(body["written"], 2)
+        self.assertEqual(
+            sorted((s["id"], s["preset"]) for s in body["skipped"]),
+            [("nope", "single_chain_bcr_igg1"), ("nope", "single_chain_bcr_igm")],
+        )
+
+    def test_exporting_several_rows_keeps_their_names_apart(self):
+        self.build(presets=list(self.EXPRESS))
+        target = self.dir / "export.fasta"
+        ids = [Store.construct_id("GL_VRC01", k) for k in self.EXPRESS]
+        res = self.client.post("/api/constructs/export",
+                               json={"ids": ids, "output": str(target)})
+        self.assertEqual(res.status_code, 200)
+        exported = read_fasta(target)
+        self.assertEqual([r.name for r in exported], ids)
+        self.assertEqual(len({r.name for r in exported}), 4)
+
+
+class LegacyConstructNameTests(unittest.TestCase):
+    """Rows keyed before the layout was part of the name.
+
+    `<antibody>_BCR` cannot tell two layouts of one antibody apart. The row
+    records its layout, so the name it should have is computable -- but a
+    rename is a modification, so it is reported and done only when asked.
+    """
+
+    def setUp(self):
+        self.dir = pathlib.Path(tempfile.mkdtemp())
+        app = create_app(self.dir)
+        app.testing = True
+        self.client = app.test_client()
+        self.store = Store(self.dir)
+        self.client.post("/api/parts/apply", json={"path": str(PARTS)})
+        self.client.post("/api/check", json={"path": str(VRC01)})
+        self.client.post("/api/approve",
+                         json={"path": str(VRC01), "ids": ["GL_VRC01"]})
+        self.client.post("/api/build", json={
+            "ids": ["GL_VRC01"], "preset": "single_chain_bcr_igm",
+            "output": str(self.dir / "out.fasta"),
+        })
+        # Rewrite the one row back to the old key, as a table from before
+        # this change would hold it.
+        rows = self.store.constructs.read()
+        self.new_id = rows[0]["id"]
+        rows[0]["id"] = "GL_VRC01_BCR"
+        self.store.constructs.write_all(rows)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def legacy(self):
+        return self.client.get("/api/constructs").get_json()["legacy"]
+
+    def test_a_legacy_row_is_reported_with_the_name_it_should_have(self):
+        (entry,) = self.legacy()
+        self.assertEqual(entry["id"], "GL_VRC01_BCR")
+        self.assertEqual(entry["new_id"], self.new_id)
+        self.assertEqual(entry["preset"], "single_chain_bcr_igm")
+
+    def test_reporting_changes_nothing(self):
+        self.legacy()
+        self.assertIn("GL_VRC01_BCR", self.store.constructs.read_map())
+
+    def test_renaming_moves_the_row_and_leaves_the_build_alone(self):
+        before = self.store.constructs.read_map()["GL_VRC01_BCR"]
+        body = self.client.post("/api/constructs/rename-legacy",
+                                json={"ids": []}).get_json()
+        self.assertEqual([m["new_id"] for m in body["moved"]], [self.new_id])
+        self.assertEqual(body["legacy"], [])
+
+        rows = self.store.constructs.read_map()
+        self.assertNotIn("GL_VRC01_BCR", rows)
+        row = rows[self.new_id]
+        for field in ("seq", "layout", "segments_json", "preset", "antibody_id"):
+            self.assertEqual(row[field], before[field])
+
+    def test_a_rename_that_would_collide_is_skipped(self):
+        """The built row wins; the legacy one is left for the user to look at."""
+        self.client.post("/api/build", json={
+            "ids": ["GL_VRC01"], "preset": "single_chain_bcr_igm",
+            "output": str(self.dir / "out2.fasta"),
+        })
+        self.assertEqual(len(self.store.constructs.read()), 2)
+        body = self.client.post("/api/constructs/rename-legacy",
+                                json={"ids": []}).get_json()
+        self.assertEqual(body["moved"], [])
+        self.assertIn("GL_VRC01_BCR", self.store.constructs.read_map())
+
+    def test_a_name_the_user_chose_is_not_touched(self):
+        self.client.post("/api/construct/save", json={
+            "old_id": "GL_VRC01_BCR", "id": "VRC01_v1", "user_notes": "",
+        })
+        self.assertEqual(self.legacy(), [])
+
+    def test_a_freshly_built_row_is_never_legacy(self):
+        self.client.post("/api/build", json={
+            "ids": ["GL_VRC01"], "presets": ["2alinked_igg1"],
+            "output": str(self.dir / "out3.fasta"),
+        })
+        self.assertEqual(
+            [e["id"] for e in self.legacy()], ["GL_VRC01_BCR"]
+        )
+
+    def test_renaming_with_nothing_to_rename_is_refused(self):
+        self.client.post("/api/constructs/rename-legacy", json={"ids": []})
+        res = self.client.post("/api/constructs/rename-legacy", json={"ids": []})
+        self.assertEqual(res.status_code, 400)

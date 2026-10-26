@@ -18,7 +18,13 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
 from . import assemble
-from .chains import parse_declared, process
+from .chains import (
+    LIGHT_SUBCLASSES,
+    accept_as_given,
+    can_accept_as_given,
+    parse_declared,
+    process,
+)
 from .fasta import Record, read_fasta, write_fasta
 from .presets import PresetStore, slugify
 from .store import Store, utc_now
@@ -31,6 +37,49 @@ def _trim_note(result) -> str:
     if result.c_trimmed:
         bits.append(f"-{result.c_trimmed} C")
     return ", ".join(bits) if bits else "already clean"
+
+
+def _add_anyway(result) -> dict:
+    """Whether a failed record could be stored as given, for the check view.
+
+    `add_anyway` gates the button; `add_anyway_blocked` is the reason it is
+    not offered, which is shown rather than swallowed -- a user who insists
+    deserves to know why insisting will not help.
+    """
+    if result.ok:
+        return {"add_anyway": False, "add_anyway_blocked": ""}
+    chain, reason = can_accept_as_given(result)
+    return {
+        "add_anyway": bool(chain),
+        "add_anyway_chain": chain or "",
+        "add_anyway_blocked": "" if chain else reason,
+        # A light chain cannot be stored without a kappa/lambda call, and an
+        # overruled record has no boundary for the rules to read one from, so
+        # the user states it. The UI offers the two outright.
+        "add_anyway_subclasses": (
+            list(LIGHT_SUBCLASSES) if chain == "light" else []
+        ),
+    }
+
+
+def _overrides_from(payload) -> tuple[list, dict]:
+    """The override fields of a check/approve payload, validated.
+
+    Raises ValueError, which both endpoints already turn into a 400.
+    """
+    overrides = payload.get("overrides") or []
+    if not isinstance(overrides, list):
+        raise ValueError("`overrides` must be a list.")
+    raw = payload.get("subclasses") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("`subclasses` must be an object.")
+    subclasses = {str(k): str(v).strip().lower() for k, v in raw.items()}
+    unknown = sorted(set(subclasses.values()) - set(LIGHT_SUBCLASSES))
+    if unknown:
+        raise ValueError(
+            f"A light chain is kappa or lambda, not {unknown[0]!r}."
+        )
+    return overrides, subclasses
 
 
 #: Extensions accepted by the drop zones. A FASTA by any other name is not
@@ -137,6 +186,7 @@ def create_app(data_dir=None) -> Flask:
             antibodies=store.antibodies.read(),
             parts=store.all_part_rows(),
             constructs=store.constructs.read(),
+            legacy_constructs=store.legacy_constructs(),
             reserved=sorted(assemble.RESERVED_PART_NAMES),
             shadowed=store.shadowed_parts(),
             stale_derived=store.stale_derived(),
@@ -184,17 +234,42 @@ def create_app(data_dir=None) -> Flask:
             shadowed=store.shadowed_parts(),
         )
 
-    def _read_and_type(path):
-        """Read a FASTA and type every record. Raises ValueError on bad input."""
+    def _read_and_type(path, overrides=(), subclasses=None):
+        """Read a FASTA and type every record. Raises ValueError on bad input.
+
+        `overrides` names records the user has chosen to store even though the
+        rules rejected them. Those are accepted verbatim here, at the one
+        place typing happens, so pairing, the approval view and the stored row
+        all see the same thing -- there is no second path into the library.
+
+        `subclasses` maps a record name to "kappa" or "lambda", which a light
+        chain stored as given cannot do without.
+        """
         try:
             records = read_fasta(path)
         except OSError as exc:
             raise ValueError(f"Cannot read {path}: {exc}") from exc
         if not records:
             raise ValueError(f"No sequences found in {path}")
+        insisted = {str(name) for name in overrides}
+        stated = subclasses or {}
         # Keep each record beside its result: the approval view needs the
         # untrimmed sequence to show what would be cut away.
-        return [(rec, process(rec.name, rec.seq)) for rec in records]
+        typed = []
+        for rec in records:
+            result = process(rec.name, rec.seq)
+            if rec.name in insisted and not result.ok:
+                # ValueError if the failure cannot be overruled, or if a light
+                # chain arrives without its kappa/lambda call.
+                result = accept_as_given(result, stated.get(rec.name))
+            typed.append((rec, result))
+        unknown = sorted(insisted - {rec.name for rec, _ in typed})
+        if unknown:
+            raise ValueError(
+                f"Asked to store {unknown[0]!r} as given, but there is no such "
+                f"record in {path}"
+            )
+        return typed
 
     def _trim_detail(record, result) -> dict:
         """Exactly which residues would be removed, for the approval view."""
@@ -253,8 +328,9 @@ def create_app(data_dir=None) -> Flask:
         """
         payload = request.get_json(silent=True) or {}
         try:
+            overrides, subclasses = _overrides_from(payload)
             path = _resolve(payload.get("path", ""))
-            typed = _read_and_type(path)
+            typed = _read_and_type(path, overrides, subclasses)
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
 
@@ -275,6 +351,12 @@ def create_app(data_dir=None) -> Flask:
                     result.ok and (result.n_trimmed or result.c_trimmed)
                 ),
                 "confidence": result.confidence if result.ok else "",
+                # A failure is a judgement, and the user may overrule it: the
+                # record is then stored exactly as it came in. `add_anyway`
+                # says whether this one could be, and `add_anyway_blocked`
+                # why not when it could not.
+                "accepted_as_given": result.accepted_as_given,
+                **_add_anyway(result),
                 "evidence": result.evidence,
                 "warnings": result.warnings,
                 "errors": result.errors,
@@ -330,6 +412,14 @@ def create_app(data_dir=None) -> Flask:
                     "vl_len": len(vl.clean_seq),
                     "confidence": f"{vh.confidence} / {vl.confidence}",
                     "decisions": decisions,
+                    # Which halves of this pair are only here because the user
+                    # overruled the sanity check. The pair is addable, but it
+                    # should not look like any other pair while it is.
+                    "accepted_as_given": [
+                        tag
+                        for tag, result in (("VH", vh), ("VL", vl))
+                        if result.accepted_as_given
+                    ],
                 }
             )
 
@@ -339,8 +429,11 @@ def create_app(data_dir=None) -> Flask:
             records=records,
             proposals=proposals,
             summary={
-                "passed": sum(1 for _, r in typed if r.ok),
+                # An overruled record is addable but it did not pass, and the
+                # count must not say it did.
+                "passed": sum(1 for _, r in typed if r.ok and not r.accepted_as_given),
                 "failed": sum(1 for _, r in typed if not r.ok),
+                "as_given": sum(1 for _, r in typed if r.accepted_as_given),
                 "ready": sum(1 for p in proposals if p["ready"]),
                 "awaiting": sum(
                     len(p.get("decisions") or []) for p in proposals if p["ready"]
@@ -360,9 +453,20 @@ def create_app(data_dir=None) -> Flask:
         rules would shorten needs one: with no decision the pair is skipped
         and said to be waiting, rather than stored under a guess. Records that
         need no trim need no decision.
+
+        `overrides` names records the rules rejected that the user has chosen
+        to store anyway, and `subclasses` gives the kappa/lambda call for any
+        light chain among them. They are re-typed and re-accepted here from
+        the file on disk, exactly as in /api/check, so insisting still cannot
+        smuggle a sequence past the rules -- it only changes what is done
+        about them.
         """
         payload = request.get_json(silent=True) or {}
         approved = {str(i) for i in (payload.get("ids") or [])}
+        try:
+            overrides, subclasses = _overrides_from(payload)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
         raw_decisions = payload.get("decisions") or {}
         if not isinstance(raw_decisions, dict):
             return jsonify(ok=False, error="`decisions` must be an object."), 400
@@ -378,7 +482,7 @@ def create_app(data_dir=None) -> Flask:
 
         try:
             path = _resolve(payload.get("path", ""))
-            typed = _read_and_type(path)
+            typed = _read_and_type(path, overrides, subclasses)
         except ValueError as exc:
             return jsonify(ok=False, error=str(exc)), 400
 
@@ -415,7 +519,16 @@ def create_app(data_dir=None) -> Flask:
                 group["id"], group["vh"], group["vl"], path, keep=keep
             )
             outcome = store.antibodies.upsert(row)
-            saved.append({"id": group["id"], "outcome": outcome, "kept": keep})
+            saved.append({
+                "id": group["id"],
+                "outcome": outcome,
+                "kept": keep,
+                "as_given": [
+                    tag
+                    for tag, result in (("VH", group["vh"]), ("VL", group["vl"]))
+                    if result.accepted_as_given
+                ],
+            })
 
         missing = approved - {s["id"] for s in saved} - {s["id"] for s in skipped}
         for antibody_id in sorted(missing):
@@ -651,8 +764,13 @@ def create_app(data_dir=None) -> Flask:
             shadowed=store.shadowed_parts(),
         )
 
-    def _describe(construct, row=None) -> dict:
-        """One construct rendered for the build-plan UI."""
+    def _describe(construct, row=None, preset="") -> dict:
+        """One construct rendered for the build-plan UI.
+
+        `preset` is the layout it was built under. It travels with every
+        construct because one run can build the same antibody several ways,
+        and the name it will be written under depends on it.
+        """
         cl_segment = next(
             (s for s in construct.segments if s.kind == "light_constant"), None
         )
@@ -673,6 +791,14 @@ def create_app(data_dir=None) -> Flask:
         seq = construct.seq
         return {
             "id": construct.name,
+            # The name this construct will carry in the FASTA and the table.
+            "construct_id": store.construct_id(construct.name, preset)
+            if preset else "",
+            "preset": preset,
+            "preset_label": (
+                preset_store.all().get(preset, {}).get("label", preset)
+                if preset else ""
+            ),
             "ok": construct.ok,
             "subclass": construct.subclass or "",
             "cl_part": cl_part,
@@ -701,40 +827,51 @@ def create_app(data_dir=None) -> Flask:
             "vl_confidence": (row or {}).get("vl_confidence", ""),
         }
 
-    def _plan(ids, preset):
-        """Resolve the selected library rows into constructs, without writing."""
+    def _plan(ids, presets):
+        """Resolve the selected library rows into constructs, without writing.
+
+        Every antibody is planned under every layout asked for, so one run can
+        produce a whole matrix. Returns (planned, built) where `built` pairs
+        each construct with the preset it came from -- the preset is not
+        recoverable from the construct, and the name depends on it.
+        """
         rows = store.antibodies.read_map()
         parts = store.parts_as_dict()
-        slots = preset_store.slots_for(preset)
         planned, constructs = [], []
-        for antibody_id in ids:
-            row = rows.get(antibody_id)
-            if row is None:
-                planned.append(
-                    {
-                        "id": antibody_id,
-                        "ok": False,
-                        "errors": ["not in the antibody library"],
-                        "warnings": [],
-                        "segments": [],
-                        "subclass": "",
-                        "cl_part": "",
-                        "size_note": "",
-                        "preview": "",
-                    }
+        for preset in presets:
+            slots = preset_store.slots_for(preset)
+            label = preset_store.all().get(preset, {}).get("label", preset)
+            for antibody_id in ids:
+                row = rows.get(antibody_id)
+                if row is None:
+                    planned.append(
+                        {
+                            "id": antibody_id,
+                            "construct_id": "",
+                            "preset": preset,
+                            "preset_label": label,
+                            "ok": False,
+                            "errors": ["not in the antibody library"],
+                            "warnings": [],
+                            "segments": [],
+                            "subclass": "",
+                            "cl_part": "",
+                            "size_note": "",
+                            "preview": "",
+                        }
+                    )
+                    continue
+                construct = assemble.build_from_layout(
+                    antibody_id,
+                    row.get("vh_seq", ""),
+                    row.get("vl_seq", ""),
+                    row.get("light_subclass") or None,
+                    parts,
+                    preset,
+                    slots,
                 )
-                continue
-            construct = assemble.build_from_layout(
-                antibody_id,
-                row.get("vh_seq", ""),
-                row.get("vl_seq", ""),
-                row.get("light_subclass") or None,
-                parts,
-                preset,
-                slots,
-            )
-            constructs.append(construct)
-            planned.append(_describe(construct, row))
+                constructs.append((preset, construct))
+                planned.append(_describe(construct, row, preset))
         return planned, constructs
 
     def _missing(slots, parts):
@@ -897,41 +1034,104 @@ def create_app(data_dir=None) -> Flask:
             return jsonify(ok=False, error=f"No saved preset '{key}'."), 400
         return jsonify(ok=True, key=key)
 
+    def _presets_from(payload) -> list[str]:
+        """The layouts a plan or build asks for, in order, de-duplicated.
+
+        One run can name several, so `presets` is the general form; `preset`
+        is the one-layout case, and an empty payload means the shipped
+        default. Raises ValueError, which both callers turn into a 400.
+        """
+        raw = payload.get("presets")
+        if raw is None:
+            raw = [payload.get("preset") or assemble.DEFAULT_PRESET]
+        if not isinstance(raw, list):
+            raise ValueError("`presets` must be a list.")
+        wanted, seen = [], set()
+        for key in (str(k) for k in raw):
+            if key not in seen:
+                seen.add(key)
+                wanted.append(key)
+        if not wanted:
+            raise ValueError("No layout selected.")
+        unknown = [k for k in wanted if preset_store.slots_for(k) is None]
+        if unknown:
+            raise ValueError(f"Unknown preset {unknown[0]!r}.")
+        return wanted
+
+    def _missing_for(presets) -> dict:
+        """Which of these layouts cannot be completed from the parts table."""
+        parts = store.parts_as_dict()
+        return {
+            key: _missing(preset_store.slots_for(key), parts)
+            for key in presets
+            if _missing(preset_store.slots_for(key), parts)
+        }
+
     @app.post("/api/plan")
     def plan():
-        """Card 4 -> 5: show what would be assembled, resolving IGKC/IGLC2."""
+        """Card 4 -> 5: show what would be assembled, resolving IGKC/IGLC2.
+
+        Every selected antibody is planned under every selected layout, so a
+        plan is a matrix: the response is one flat list, each entry naming the
+        layout it belongs to and the name it would be written under.
+        """
         payload = request.get_json(silent=True) or {}
         ids = [str(i) for i in (payload.get("ids") or [])]
-        preset = payload.get("preset") or assemble.DEFAULT_PRESET
+        try:
+            presets = _presets_from(payload)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
 
         if not ids:
             return jsonify(ok=False, error="No antibodies selected."), 400
-        if preset_store.slots_for(preset) is None:
-            return jsonify(ok=False, error=f"Unknown preset {preset!r}."), 400
-        missing = _missing(preset_store.slots_for(preset), store.parts_as_dict())
-        if missing:
+        # A layout that cannot be completed stops the whole plan rather than
+        # quietly contributing nothing: the user picked it on purpose.
+        shortfall = _missing_for(presets)
+        if shortfall:
+            labels = preset_store.all()
             detail = "; ".join(
-                m["part"] + (f" (did you mean '{m['suggestion']}'?)" if m["suggestion"] else "")
-                for m in missing
+                f"{labels[key]['label']} needs "
+                + ", ".join(
+                    m["part"]
+                    + (f" (did you mean '{m['suggestion']}'?)" if m["suggestion"] else "")
+                    for m in missing
+                )
+                for key, missing in shortfall.items()
             )
             return (
                 jsonify(
                     ok=False,
                     error=(
-                        f"This preset needs parts that are not in the parts "
-                        f"table: {detail}. Open Utilities to import a parts "
-                        f"FASTA containing them, or edit the preset there."
+                        f"Parts are missing from the parts table: {detail}. "
+                        f"Open Utilities to import a parts FASTA containing "
+                        f"them, or edit the layout there."
                     ),
-                    missing=missing,
+                    missing=[m for missing in shortfall.values() for m in missing],
+                    missing_by_preset=shortfall,
                 ),
                 400,
             )
 
-        planned, _ = _plan(ids, preset)
+        planned, _ = _plan(ids, presets)
+        all_presets = preset_store.all()
         return jsonify(
             ok=True,
-            preset=preset,
-            preset_label=preset_store.all()[preset]["label"],
+            presets=[
+                {
+                    "key": key,
+                    "label": all_presets[key]["label"],
+                    "buildable": sum(
+                        1 for p in planned if p["preset"] == key and p["ok"]
+                    ),
+                    "planned": sum(1 for p in planned if p["preset"] == key),
+                }
+                for key in presets
+            ],
+            # The single-layout view, kept because most runs are one layout.
+            preset=presets[0] if len(presets) == 1 else "",
+            preset_label=(
+                all_presets[presets[0]]["label"] if len(presets) == 1 else ""
+            ),
             constructs=planned,
             buildable=sum(1 for p in planned if p["ok"]),
         )
@@ -941,13 +1141,14 @@ def create_app(data_dir=None) -> Flask:
         """Card 5: write the confirmed constructs to a FASTA file."""
         payload = request.get_json(silent=True) or {}
         ids = [str(i) for i in (payload.get("ids") or [])]
-        preset = payload.get("preset") or assemble.DEFAULT_PRESET
         raw_output = (payload.get("output") or "bcr_constructs.fasta").strip()
+        try:
+            presets = _presets_from(payload)
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
 
         if not ids:
             return jsonify(ok=False, error="No antibodies selected."), 400
-        if preset_store.slots_for(preset) is None:
-            return jsonify(ok=False, error=f"Unknown preset {preset!r}."), 400
 
         output = Path(raw_output).expanduser()
         if not output.is_absolute():
@@ -955,8 +1156,8 @@ def create_app(data_dir=None) -> Flask:
         if output.is_dir():
             return jsonify(ok=False, error=f"{output} is a directory."), 400
 
-        planned, constructs = _plan(ids, preset)
-        built = [c for c in constructs if c.ok]
+        planned, constructs = _plan(ids, presets)
+        built = [(preset, c) for preset, c in constructs if c.ok]
         if not built:
             return (
                 jsonify(
@@ -975,18 +1176,23 @@ def create_app(data_dir=None) -> Flask:
             except OSError:
                 replaced = 0
 
+        labels = preset_store.all()
         try:
             write_fasta(
                 output,
                 [
                     Record(
-                        name=f"{c.name}_BCR",
+                        # The build mode is part of the name: several layouts
+                        # of one antibody share this file, and a reader with
+                        # only the FASTA must still be able to tell them apart.
+                        name=store.construct_id(c.name, preset),
                         seq=c.seq,
                         description=(
-                            f"{c.subclass} BCR, {c.size_note} | {c.layout}"
+                            f"{c.subclass} BCR, {c.size_note} | "
+                            f"{labels[preset]['label']} | {c.layout}"
                         ),
                     )
-                    for c in built
+                    for preset, c in built
                 ],
             )
         except OSError as exc:
@@ -994,7 +1200,7 @@ def create_app(data_dir=None) -> Flask:
 
         # Keep what was built, so the constructs library reflects the file.
         stored = store.constructs.read_map()
-        for construct in built:
+        for preset, construct in built:
             row = store.construct_row(construct, preset, output)
             stored[row["id"]] = row
         store.constructs.write_all(list(stored.values()))
@@ -1004,14 +1210,53 @@ def create_app(data_dir=None) -> Flask:
             output=str(output),
             written=len(built),
             replaced=replaced,
-            skipped=[p["id"] for p in planned if not p["ok"]],
+            skipped=[
+                {"id": p["id"], "preset": p["preset"], "label": p["preset_label"]}
+                for p in planned
+                if not p["ok"]
+            ],
+            # One line per layout, so a run of several says what each produced.
+            by_preset=[
+                {
+                    "key": key,
+                    "label": labels[key]["label"],
+                    "written": sum(1 for preset, _ in built if preset == key),
+                }
+                for key in presets
+            ],
+            names=[store.construct_id(c.name, preset) for preset, c in built],
             constructs=planned,
             library=store.constructs.read(),
+            legacy=store.legacy_constructs(),
         )
 
     @app.get("/api/constructs")
     def constructs():
-        return jsonify(constructs=store.constructs.read())
+        return jsonify(
+            constructs=store.constructs.read(),
+            legacy=store.legacy_constructs(),
+        )
+
+    @app.post("/api/constructs/rename-legacy")
+    def rename_legacy_constructs():
+        """Give pre-layout-naming rows their layout-qualified ids.
+
+        Offered rather than done: it renames rows the user may have referred
+        to elsewhere, so it waits to be asked. The sequences are untouched.
+        """
+        payload = request.get_json(silent=True) or {}
+        ids = [str(i) for i in (payload.get("ids") or [])]
+        if not ids:
+            ids = [entry["id"] for entry in store.legacy_constructs()]
+        if not ids:
+            return jsonify(ok=False, error="No rows need renaming."), 400
+        moved = store.rename_legacy_constructs(ids)
+        return jsonify(
+            ok=True,
+            moved=moved,
+            library=store.constructs.read(),
+            legacy=store.legacy_constructs(),
+        )
 
     @app.post("/api/construct/delete")
     def delete_construct():
@@ -1020,7 +1265,11 @@ def create_app(data_dir=None) -> Flask:
         if not construct_id:
             return jsonify(ok=False, error="No id given."), 400
         removed = store.constructs.delete(construct_id)
-        return jsonify(ok=removed, library=store.constructs.read())
+        return jsonify(
+            ok=removed,
+            library=store.constructs.read(),
+            legacy=store.legacy_constructs(),
+        )
 
     @app.post("/api/constructs/export")
     def export_constructs():
@@ -1063,6 +1312,7 @@ def create_app(data_dir=None) -> Flask:
                             f"{rows[i]['subclass']} BCR, "
                             f"{rows[i]['residue_count']} aa"
                             + (" + stop" if rows[i]["has_stop"] == "yes" else "")
+                            + f" | {rows[i].get('preset', '')}"
                             + f" | {rows[i]['layout']}"
                         ),
                     )
@@ -1129,15 +1379,59 @@ def create_app(data_dir=None) -> Flask:
                 f"Rename that one first, or edit it instead.",
             ), 409
 
-        vh = process(f"{new_id}_VH", vh_raw)
-        vl = process(f"{new_id}_VL", vl_raw)
-        failures = [f"VH: {e}" for e in vh.errors] + [f"VL: {e}" for e in vl.errors]
+        typed = {
+            "VH": process(f"{new_id}_VH", vh_raw),
+            "VL": process(f"{new_id}_VL", vl_raw),
+        }
+        # A failed chain can be stored as it stands, if the user says so for
+        # that chain by name. The flag is per chain, so insisting on one half
+        # never quietly waves the other half through. For the light chain the
+        # flag carries the kappa/lambda call, since nothing can be read off a
+        # sequence whose V domain was never found.
+        failures, offers = [], []
+        for tag, field in (("VH", "vh_as_given"), ("VL", "vl_as_given")):
+            result = typed[tag]
+            if result.ok:
+                continue
+            chain, reason = can_accept_as_given(result)
+            said = payload.get(field)
+            if chain and said:
+                stated = said if isinstance(said, str) else ""
+                try:
+                    typed[tag] = accept_as_given(result, stated)
+                    continue
+                except ValueError as exc:
+                    # Said yes, but not which subclass: ask rather than guess.
+                    reason = str(exc)
+                    failures.append(f"{tag}: {reason}")
+                    offers.append({
+                        "chain": tag,
+                        "field": field,
+                        "can": True,
+                        "blocked": "",
+                        "as_given": len(result.input_seq),
+                        "subclasses": list(LIGHT_SUBCLASSES)
+                        if chain == "light" else [],
+                    })
+                    continue
+            failures.extend(f"{tag}: {e}" for e in result.errors)
+            offers.append({
+                "chain": tag,
+                "field": field,
+                "can": bool(chain),
+                "blocked": "" if chain else reason,
+                "as_given": len(result.input_seq),
+                # The light chain is offered as two: kappa or lambda.
+                "subclasses": list(LIGHT_SUBCLASSES) if chain == "light" else [],
+            })
         if failures:
             return jsonify(
                 ok=False,
                 error="These sequences do not type as a VH / VL pair.",
                 problems=failures,
+                add_anyway=offers,
             ), 400
+        vh, vl = typed["VH"], typed["VL"]
 
         # Trimming is a modification, so it is never applied to a pasted
         # sequence on the strength of the paste alone. A chain the rules would
@@ -1190,6 +1484,13 @@ def create_app(data_dir=None) -> Flask:
 
         notes = []
         for tag, result in (("VH", vh), ("VL", vl)):
+            if result.accepted_as_given:
+                notes.append(
+                    f"{tag} stored as given at your request after failing the "
+                    f"sanity check: all {len(result.clean_seq)} residues, with "
+                    f"no chain class, boundary or FR4 established"
+                )
+                continue
             if result.n_trimmed or result.c_trimmed:
                 notes.append(
                     f"{tag} kept as given; the {_trim_note(result)} the rules "
@@ -1213,6 +1514,7 @@ def create_app(data_dir=None) -> Flask:
             warnings=list(vh.warnings) + list(vl.warnings),
             library=store.antibodies.read(),
             constructs=store.constructs.read(),
+            legacy_constructs=store.legacy_constructs(),
             stale_derived=store.stale_derived(),
         )
 
@@ -1353,7 +1655,12 @@ def create_app(data_dir=None) -> Flask:
         if new_id != old_id:
             store.constructs.delete(old_id)
         store.constructs.upsert(row)
-        return jsonify(ok=True, id=new_id, library=store.constructs.read())
+        return jsonify(
+            ok=True,
+            id=new_id,
+            library=store.constructs.read(),
+            legacy=store.legacy_constructs(),
+        )
 
     @app.post("/api/upload")
     def upload():

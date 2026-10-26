@@ -532,6 +532,7 @@
     assembled rather than typed in, so only its id and your notes are editable.
   </p>
   <div id="conEdit"></div>
+  <div id="conLegacy"></div>
   <div id="conOut"></div>
   <div id="conExport" hidden>
     <label class="field" style="margin-top:16px">
@@ -726,6 +727,29 @@ const selected  = new Set();   // antibody ids ticked in card 2
 const selectedC = new Set();   // construct ids ticked in card 4
 let lastCheckPath = null;      // re-read on approve rather than trusting the browser
 let lastPartsPath = null;
+/* Records whose sanity-check failure the user has overruled. Typing still
+   happens on the server, every time: this only says what to do about a
+   failure, so approve re-reads the file and re-applies these by name. */
+const seqOverrides = new Set();
+/* And, for a light chain among them, the kappa/lambda call the user states:
+   nothing can be read off a sequence whose V domain was never found. */
+const seqSubclasses = {};
+
+/* Re-rendering a block in place empties it first, and a scroll container
+   clamps its offset to whatever is left -- so the view jumps to the top and
+   the user loses the record they were looking at. Call this before replacing
+   a block's contents and call what it returns afterwards: it holds both the
+   panel body (the only element with its own scrollbar) and the window, since
+   which of the two actually moved depends on where the block lives. */
+function holdScroll(el) {
+  const box = el && el.closest(".up-body");
+  const top = box ? box.scrollTop : 0;
+  const pageY = window.scrollY;
+  return () => {
+    if (box) box.scrollTop = top;
+    if (window.scrollY !== pageY) window.scrollTo({ top: pageY });
+  };
+}
 
 async function postJSON(url, body) {
   const res = await fetch(url, {
@@ -738,6 +762,7 @@ async function postJSON(url, body) {
   if (!res.ok || data.ok === false) {
     const err = new Error(data.error || `Request failed (${res.status})`);
     err.problems = data.problems || [];   // the rest of why, if the server said
+    err.addAnyway = data.add_anyway || null;   // chains that could go in as given
     throw err;
   }
   return data;
@@ -844,6 +869,7 @@ function renderCheck(d) {
   let html = `<div class="pills">
     <span class="pill ${s.passed ? "ok" : ""}">${s.passed} passed</span>
     <span class="pill ${s.failed ? "fail" : ""}">${s.failed} failed</span>
+    ${s.as_given ? `<span class="pill warn">${s.as_given} added anyway</span>` : ""}
     <span class="pill ${s.ready ? "ok" : "warn"}">${s.ready} ready to add</span>
     <span class="pill warn">nothing stored yet</span>
   </div>`;
@@ -852,14 +878,52 @@ function renderCheck(d) {
     html += `<div class="decide ${r.status === "ok" ? "" : "bad"}"><div class="dh">
       <strong>${esc(r.name)}</strong>`;
     html += r.status === "ok"
-      ? `<span class="pill ok">${esc(r.detected)}${r.subclass ? " / " + esc(r.subclass) : ""}</span>
+      ? `<span class="pill ${r.accepted_as_given ? "warn" : "ok"}">${esc(r.detected)}${r.subclass ? " / " + esc(r.subclass) : ""}</span>
          <span class="pill">${r.length} aa</span>
-         <span class="pill">${esc(r.confidence)} confidence</span>`
+         <span class="pill">${esc(r.confidence)} confidence</span>
+         ${r.accepted_as_given ? `<span class="pill warn">added anyway</span>` : ""}`
       : `<span class="pill fail">failed</span>`;
     html += `</div>`;
     for (const e of r.errors)   html += `<p class="note fail">${esc(e)}</p>`;
     for (const w of r.warnings) html += `<p class="note warn">${esc(w)}</p>`;
     html += trimViz(r.trim);
+    /* A failure is the rules' judgement, and it can be overruled -- in one
+       direction only: the sequence is then stored exactly as it came in. */
+    if (r.status !== "ok" && r.add_anyway) {
+      const subs = r.add_anyway_subclasses || [];
+      html += `<div class="choice">
+        <div class="ch-head">The rules will not type this record. If you know
+          better — an engineered format, a fragment, a chimera — it can go in
+          <strong>exactly as it came in</strong>: stored whole as
+          ${esc(r.add_anyway_chain || "its")} chain, with no trim and no
+          boundary. Assembly then splices it verbatim.${subs.length
+            ? ` Say which it is: a light chain needs κ or λ to be given a
+                constant region at all, and there is no V domain here to read
+                one off, so this is <strong>your</strong> call, not the
+                rules'.`
+            : ``}</div>
+        <div class="row">${subs.length
+          ? subs.map((sc) => `<button class="ghost small"
+              data-anyway="${esc(r.name)}" data-subclass="${esc(sc)}">
+              Add as ${esc(sc)} ${sc === "kappa" ? "(κ, IGKC)" : "(λ, IGLC2)"}
+            </button>`).join("")
+          : `<button class="ghost small" data-anyway="${esc(r.name)}">
+              Add ${esc(r.name)} as given anyway</button>`}</div>
+      </div>`;
+    } else if (r.status !== "ok" && r.add_anyway_blocked) {
+      html += `<p class="note fail">This one cannot be stored even as given:
+        ${esc(r.add_anyway_blocked)}.</p>`;
+    } else if (r.accepted_as_given) {
+      html += `<div class="choice">
+        <div class="ch-head">Being added as given, on your say-so, with nothing
+          derived from it${r.subclass
+            ? ` — and as <strong>${esc(r.subclass)}</strong>, which you stated
+                rather than the rules reading it`
+            : ``}.</div>
+        <div class="row"><button class="ghost small" data-unanyway="${esc(r.name)}">
+          No — hold it to the rules again</button></div>
+      </div>`;
+    }
     if (r.proposes_trim) {
       html += `<div class="choice" data-choice="${esc(r.name)}">
         <div class="ch-head">This would <strong>modify the sequence</strong>
@@ -892,6 +956,9 @@ function renderCheck(d) {
           html += `<span class="pill ${p.changed ? "warn" : ""}">${
             p.changed ? "sequences differ from the stored row" : "same sequences as stored"}</span>`;
         }
+        if (p.accepted_as_given && p.accepted_as_given.length) {
+          html += `<span class="pill warn">${esc(p.accepted_as_given.join(" + "))} as given</span>`;
+        }
       } else {
         html += `<strong>${esc(p.id)}</strong><span class="pill fail">${esc(p.action)}</span>`;
       }
@@ -922,6 +989,32 @@ function renderCheck(d) {
   };
   if ($("trimAll")) $("trimAll").onclick = () => setAll("trim");
   if ($("keepAll")) $("keepAll").onclick = () => setAll("keep");
+
+  /* Overruling a failure re-runs the check with that record named, so the
+     server types the file again and the pairing, the trim view and the row
+     that eventually gets stored all come from one place.
+     The view is re-rendered where it stands: no "Processing…" placeholder, so
+     the list does not collapse under the cursor, and the panel's offset is put
+     back once the new render is in. */
+  const again = async (fn) => {
+    fn();
+    const restore = holdScroll($("checkOut"));
+    try { await runCheck({ quiet: true }); }
+    catch (e) { $("checkOut").innerHTML = banner(e.message); }
+    restore();
+  };
+  $("checkOut").querySelectorAll("[data-anyway]").forEach((b) => {
+    b.onclick = () => again(() => {
+      seqOverrides.add(b.dataset.anyway);
+      if (b.dataset.subclass) seqSubclasses[b.dataset.anyway] = b.dataset.subclass;
+    });
+  });
+  $("checkOut").querySelectorAll("[data-unanyway]").forEach((b) => {
+    b.onclick = () => again(() => {
+      seqOverrides.delete(b.dataset.unanyway);
+      delete seqSubclasses[b.dataset.unanyway];
+    });
+  });
   $("checkOut").querySelectorAll("[data-choice] input").forEach((radio) => {
     radio.onchange = refreshChoices;
   });
@@ -966,9 +1059,11 @@ async function approve() {
       if (value) decisions[name] = value;
     }
     const d = await postJSON("/api/approve",
-      { path: lastCheckPath, ids, decisions });
+      { path: lastCheckPath, ids, decisions,
+        overrides: [...seqOverrides], subclasses: seqSubclasses });
     const added = d.saved.map((s) => `${s.id} (${s.outcome}${
-      s.kept && s.kept.length ? `, ${s.kept.join(" + ")} kept as given` : ""})`).join(", ");
+      s.kept && s.kept.length ? `, ${s.kept.join(" + ")} kept as given` : ""}${
+      s.as_given && s.as_given.length ? `, ${s.as_given.join(" + ")} added despite failing the check` : ""})`).join(", ");
     let html = d.saved.length
       ? okBanner(`Stored ${d.saved.length}: ${added}`)
       : banner("Nothing was stored.");
@@ -988,13 +1083,25 @@ async function approve() {
   }
 }
 
+async function runCheck(opts = {}) {
+  /* A fresh look at a file says so; a re-run over a view already on screen
+     leaves it alone, because emptying it would scroll the panel to the top. */
+  if (!opts.quiet) $("checkOut").innerHTML = `<p class="empty">Processing…</p>`;
+  renderCheck(await postJSON("/api/check", {
+    path: lastCheckPath,
+    overrides: [...seqOverrides],
+    subclasses: seqSubclasses,
+  }));
+}
+
 $("processBtn").onclick = async () => {
   const btn = $("processBtn");
   btn.disabled = true;
-  $("checkOut").innerHTML = `<p class="empty">Processing…</p>`;
   try {
     lastCheckPath = $("seqPath").value;
-    renderCheck(await postJSON("/api/check", { path: lastCheckPath }));
+    seqOverrides.clear();   // a fresh look at the file starts with none
+    for (const k of Object.keys(seqSubclasses)) delete seqSubclasses[k];
+    await runCheck();
   } catch (e) {
     $("checkOut").innerHTML = banner(e.message);
   } finally { btn.disabled = false; }
@@ -1246,8 +1353,9 @@ function updateUtilBar() {
   $("ubParts").textContent = n ? `${n} part${n === 1 ? "" : "s"}` : "no parts";
   $("ubParts").className = "pill" + (n ? "" : " warn");
 
-  const active = presetData?.presets?.[activePreset];
-  const missing = active?.missing?.length || 0;
+  // Every ticked layout's shortfall, since a run can carry several.
+  const missing = checkedPresets().reduce(
+    (n, k) => n + (presetData.presets[k].missing?.length || 0), 0);
   const total = Object.keys(presetData?.presets || {}).length;
   $("ubPresets").textContent = missing
     ? `${missing} missing part${missing > 1 ? "s" : ""}`
@@ -1323,7 +1431,8 @@ function abEditor() {
     <div id="abEditOut"></div></div>`;
 
   const chosen = {};   // chain -> "trim" | "keep", once the user has said
-  const submit = async () => {
+  const asGiven = {};  // field -> true, for a chain the user overruled
+  const send = async () => {
     const d = await postJSON("/api/antibody/save", {
       old_id: isNew ? "" : editing.ab,
       id: $("abEditId").value,
@@ -1332,14 +1441,28 @@ function abEditor() {
       user_notes: $("abEditNotes").value,
       vh_decision: chosen.VH || "",
       vl_decision: chosen.VL || "",
+      ...asGiven,
     });
     if (d.stored === false) { askAboutTrim(d.needs_decision, chosen, submit); return; }
     editing.ab = null;
     renderAntibodies(d.library);
     renderExpress(d.library, d.stale_derived);
-    renderConstructs(d.constructs);
+    renderConstructs(d.constructs, d.legacy_constructs);
     slot.innerHTML = okBanner(`${d.id} ${d.outcome}.`)
       + noteList([...(d.notes || []), ...(d.warnings || [])]);
+  };
+  /* A chain the rules reject can still go in, one chain at a time and only
+     once the user has said so for that chain by name. */
+  const submit = async () => {
+    try {
+      await send();
+    } catch (e) {
+      if (e.addAnyway && e.addAnyway.some((o) => o.can)) {
+        askAboutFailure(e, asGiven, submit);
+        return;
+      }
+      throw e;
+    }
   };
   wireEditor("abEdit", "ab", submit);
   $("abEditId").focus();
@@ -1376,10 +1499,50 @@ function askAboutTrim(pending, chosen, resubmit) {
   out.querySelectorAll("[data-trim] input").forEach((r) => { r.onchange = check; });
   go.onclick = async () => {
     go.disabled = true;
+    const restore = holdScroll(out);
     out.innerHTML = `<p class="empty">Saving…</p>`;
     try { await resubmit(); }
     catch (e) { out.innerHTML = errBlock(e); }
+    restore();
   };
+}
+
+/* Nothing was written: a chain did not type. The rules' verdict stands as
+   shown, but it is a verdict, so it can be overruled -- in one direction
+   only, storing the sequence exactly as pasted. */
+function askAboutFailure(err, asGiven, resubmit) {
+  const out = $("abEditOut");
+  out.innerHTML = errBlock(err) + err.addAnyway.map((o) => o.can
+    ? `<div class="choice">
+        <div class="ch-head">${esc(o.chain)} can still go in <strong>exactly as
+          you pasted it</strong>: all ${o.as_given} residues, untrimmed, with no
+          chain class or boundary derived from it. Assembly will splice it
+          verbatim.${(o.subclasses || []).length
+            ? ` A light chain also needs κ or λ from you — there is no V domain
+                here for the rules to read one off, and without it no constant
+                region can be chosen.`
+            : ``}</div>
+        <div class="row">${(o.subclasses || []).length
+          ? o.subclasses.map((sc) => `<button class="ghost small"
+              data-asgiven="${esc(o.field)}" data-subclass="${esc(sc)}">
+              Add as ${esc(sc)} ${sc === "kappa" ? "(κ, IGKC)" : "(λ, IGLC2)"}
+            </button>`).join("")
+          : `<button class="ghost small" data-asgiven="${esc(o.field)}">
+              Add the ${esc(o.chain)} as given anyway</button>`}</div>
+      </div>`
+    : `<p class="note fail">${esc(o.chain)} cannot be stored even as given:
+        ${esc(o.blocked)}.</p>`).join("");
+
+  out.querySelectorAll("[data-asgiven]").forEach((b) => {
+    b.onclick = async () => {
+      asGiven[b.dataset.asgiven] = b.dataset.subclass || true;
+      const restore = holdScroll(out);
+      out.innerHTML = `<p class="empty">Saving…</p>`;
+      try { await resubmit(); }
+      catch (e) { out.innerHTML = errBlock(e); }
+      restore();
+    };
+  });
 }
 
 /* --- parts: name and sequence; role is inferred, never typed in --- */
@@ -1450,7 +1613,7 @@ function conEditor() {
       user_notes: $("conEditNotes").value,
     });
     editing.con = null;
-    renderConstructs(d.library);
+    renderConstructs(d.library, d.legacy);
     slot.innerHTML = okBanner(`Saved as ${d.id}.`);
   });
   $("conEditId").focus();
@@ -1559,38 +1722,37 @@ function renderExpressPresets() {
     row.innerHTML = `<span class="note">No express layouts are installed.</span>`;
     return;
   }
-  for (const [key, p] of express) {
-    const b = document.createElement("button");
-    b.className = "preset" + (key === activePreset ? " active" : "");
-    b.textContent = p.label;
-    b.onclick = () => {
-      activePreset = key;
-      renderPresetButtons(); renderLayout();      // the front face shares it
-      renderExpressPresets(); renderExpressLayout();
-    };
-    row.appendChild(b);
-  }
+  const redraw = () => {
+    renderPresetButtons(); renderLayout();        // the front face shares it
+    renderExpressPresets(); renderExpressLayout();
+  };
+  for (const [key, p] of express) row.appendChild(presetToggle(key, p, redraw));
+
+  // All four at once is the common case here, so offer it outright.
+  const all = express.every(([key]) => activePresets.has(key));
+  const b = document.createElement("button");
+  b.className = "ghost small";
+  b.textContent = all ? "Untick all" : `All ${express.length}`;
+  b.onclick = () => {
+    express.forEach(([key]) =>
+      all ? activePresets.delete(key) : activePresets.add(key));
+    redraw();
+  };
+  row.appendChild(b);
 }
 
 function renderExpressLayout() {
   if (!presetData) return;
-  const p = presetData.presets[activePreset];
-  if (!p || !p.express) {
-    $("expressDesc").textContent = "";
-    $("expressViz").innerHTML = `<p class="note">Pick one of the express layouts above.</p>`;
-    refreshExpress();
-    return;
-  }
-  $("expressDesc").textContent = p.description;
-  let html = `<div class="chain"><span class="term">N</span>`;
-  p.layout.forEach((s, i) => {
-    if (i) html += `<span class="arrow">→</span>`;
-    const missing = s.detail === "not in the parts table";
-    html += `<span class="chip k-${esc(s.kind)}${missing ? " missing" : ""}">
-      <span class="nm">${esc(s.label)}</span><span class="dt">${esc(s.detail)}</span></span>`;
-  });
-  html += `<span class="arrow">→</span><span class="term">C</span></div>`;
-  $("expressViz").innerHTML = html + missingBanner(p.missing, `The "${p.label}" layout`);
+  const keys = checkedPresets();
+  const here = keys.filter((k) => presetData.presets[k].express);
+  const elsewhere = keys.length - here.length;
+  $("expressDesc").textContent = elsewhere
+    ? `${elsewhere} layout${elsewhere === 1 ? "" : "s"} ticked on the layout `
+      + `face count towards this run too.`
+    : "";
+  $("expressViz").innerHTML = here.length
+    ? here.map((k) => layoutDiagram(k, presetData.presets[k], here.length > 1)).join("")
+    : `<p class="note">Tick one or more express layouts above.</p>`;
   refreshExpress();
 }
 
@@ -1608,17 +1770,9 @@ function syncExpressTicks() {
 }
 
 function refreshExpress() {
-  const n = selected.size;
-  const p = presetData && presetData.presets[activePreset];
-  const blocked = !p || !p.express || (p.missing && p.missing.length > 0);
-  $("expressPlanBtn").disabled = n === 0 || blocked;
-  $("expressHint").textContent = !p || !p.express
-    ? "Pick an express layout above."
-    : blocked
-    ? "That layout is missing parts — see the warning above."
-    : n
-    ? `Will plan ${n} construct${n > 1 ? "s" : ""} with ${p.label}.`
-    : "Tick the antibodies to build.";
+  const problem = runProblem();
+  $("expressPlanBtn").disabled = !!problem;
+  $("expressHint").textContent = problem || runSummary();
   syncFaces();
 }
 
@@ -1655,6 +1809,7 @@ window.addEventListener("resize", syncFaces);
 /* ================= Card 1: antibody library ================= */
 let lastAbRows = [];
 let lastConRows = [];
+let lastConLegacy = [];
 
 function renderAntibodies(rows) {
   lastAbRows = rows;
@@ -1727,12 +1882,14 @@ function renderAntibodies(rows) {
 }
 
 /* ================= Card 4: constructs library ================= */
-function renderConstructs(rows) {
+function renderConstructs(rows, legacy) {
   lastConRows = rows;
+  if (legacy !== undefined) lastConLegacy = legacy || [];
   $("conCount").textContent = `${rows.length} stored`;
   $("conExport").hidden = rows.length === 0;
   if (!rows.length) {
     $("conOut").innerHTML = `<p class="empty">No constructs yet — build some in card 3.</p>`;
+    renderLegacyConstructs();
     return;
   }
   let html = `<div class="tablewrap"><table><thead><tr>
@@ -1764,6 +1921,7 @@ function renderConstructs(rows) {
     }
   }
   $("conOut").innerHTML = html + `</tbody></table></div>`;
+  renderLegacyConstructs();
 
   const present = new Set(rows.map((r) => r.id));
   for (const id of [...selectedC]) if (!present.has(id)) selectedC.delete(id);
@@ -1787,10 +1945,40 @@ function renderConstructs(rows) {
   $("conOut").querySelectorAll("[data-delc]").forEach((b) => {
     b.onclick = async () => {
       if (!confirm(`Remove ${b.dataset.delc} from the constructs library?`)) return;
-      try { renderConstructs((await postJSON("/api/construct/delete", { id: b.dataset.delc })).library); }
+      try {
+        const d = await postJSON("/api/construct/delete", { id: b.dataset.delc });
+        renderConstructs(d.library, d.legacy);
+      }
       catch (e) { $("conOut").innerHTML += banner(e.message); }
     };
   });
+}
+
+/* Rows built before the layout was part of the name. Renaming them is a
+   modification, so it is offered and never done on the quiet; the sequences
+   are untouched either way. */
+function renderLegacyConstructs() {
+  const slot = $("conLegacy");
+  if (!lastConLegacy.length) { slot.innerHTML = ""; return; }
+  slot.innerHTML = `<div class="banner"><strong>${lastConLegacy.length} row${
+    lastConLegacy.length === 1 ? "" : "s"}</strong> ${
+    lastConLegacy.length === 1 ? "was" : "were"} built before the build mode was
+    part of the name, so ${lastConLegacy.length === 1 ? "it" : "they"} cannot
+    tell two layouts of one antibody apart:<br>` + lastConLegacy
+      .map((e) => `<span class="mono">${esc(e.id)}</span> →
+        <span class="mono">${esc(e.new_id)}</span>`).join("<br>")
+    + `<div class="row" style="margin-top:10px">
+        <button class="ghost small" id="conLegacyGo">Rename ${
+          lastConLegacy.length === 1 ? "it" : "them"}</button>
+        <span class="note">Sequences and segment maps are untouched.</span>
+      </div></div>`;
+  $("conLegacyGo").onclick = async () => {
+    $("conLegacyGo").disabled = true;
+    try {
+      const d = await postJSON("/api/constructs/rename-legacy", { ids: [] });
+      renderConstructs(d.library, d.legacy);
+    } catch (e) { slot.innerHTML = banner(e.message); }
+  };
 }
 
 $("exportBtn").onclick = async () => {
@@ -2031,7 +2219,13 @@ function renderPresetList() {
 async function reloadPresets() {
   presetData = await (await fetch("/api/presets")).json();
   palette = presetData.palette || [];
-  if (!presetData.presets[activePreset]) activePreset = presetData.default;
+  // Drop any tick whose layout has gone, and start from the shipped default.
+  for (const key of [...activePresets]) {
+    if (!presetData.presets[key]) activePresets.delete(key);
+  }
+  if (!activePresets.size && presetData.presets[presetData.default]) {
+    activePresets.add(presetData.default);
+  }
   renderPalette();
   renderPresetButtons();
   renderLayout();
@@ -2042,19 +2236,61 @@ async function reloadPresets() {
 }
 
 /* ================= Cards 2 & 3: layout, plan, build ================= */
-let presetData = null, activePreset = null;
+let presetData = null;
+/* The layouts ticked for this run — several at once. One run builds every
+   ticked antibody under every ticked layout, and each construct is named
+   after the layout it came from, so they stay distinct in one FASTA. Both
+   faces of card 2 tick the same set. */
+const activePresets = new Set();
+
+/* In the order the presets are listed, so a run is reproducible. */
+function checkedPresets() {
+  return Object.keys((presetData && presetData.presets) || {})
+    .filter((k) => activePresets.has(k));
+}
+
+/* Layouts that cannot be completed from the parts table: ticking one blocks
+   the run rather than quietly contributing nothing. */
+function blockedPresets() {
+  return checkedPresets().filter((k) => {
+    const p = presetData.presets[k];
+    return p.missing && p.missing.length > 0;
+  });
+}
+
+function runSize() {
+  return selected.size * checkedPresets().length;
+}
+
+/* What is wrong with the current selection, or "" when nothing is. Shared by
+   both faces so they cannot disagree about whether a run can go ahead. */
+function runProblem() {
+  if (!presetData) return "Loading layouts…";
+  if (!presetData.parts_loaded)
+    return "The parts table is empty — open Utilities → Construct parts.";
+  if (!checkedPresets().length) return "Tick at least one layout.";
+  const blocked = blockedPresets();
+  if (blocked.length) {
+    return `${blocked.map((k) => presetData.presets[k].label).join(", ")} ${
+      blocked.length === 1 ? "is" : "are"} missing parts — see the warning above.`;
+  }
+  if (!selected.size) return "Select antibodies in card 1 first.";
+  return "";
+}
+
+function runSummary() {
+  const n = selected.size, m = checkedPresets().length;
+  return `Will plan ${runSize()} construct${runSize() === 1 ? "" : "s"} — ${
+    n} antibod${n === 1 ? "y" : "ies"} × ${m} layout${m === 1 ? "" : "s"}.`;
+}
 
 function refreshSelection() {
   const n = selected.size;
   $("selCount").textContent = n ? `${n} selected` : "none selected";
   $("selCount").className = "pill" + (n ? " ok" : "");
-  const blocked = $("planBtn").dataset.blocked === "1";
-  $("planBtn").disabled = n === 0 || blocked;
-  $("planHint").textContent = blocked
-    ? "The selected preset is missing parts — see the warning above."
-    : n
-    ? `Will plan ${n} construct${n > 1 ? "s" : ""} from the stored tables.`
-    : "Select antibodies in card 1 first.";
+  const problem = runProblem();
+  $("planBtn").disabled = !!problem;
+  $("planHint").textContent = problem || runSummary();
 }
 
 function renderPresetButtons() {
@@ -2065,12 +2301,27 @@ function renderPresetButtons() {
   const row = $("presetRow");
   row.innerHTML = "";
   for (const [key, p] of Object.entries(presetData.presets)) {
-    const b = document.createElement("button");
-    b.className = "preset" + (key === activePreset ? " active" : "");
-    b.textContent = p.label;
-    b.onclick = () => { activePreset = key; renderPresetButtons(); renderLayout(); };
-    row.appendChild(b);
+    row.appendChild(presetToggle(key, p, () => {
+      renderPresetButtons(); renderLayout();
+      renderExpressPresets(); renderExpressLayout();   // the faces share it
+    }));
   }
+}
+
+/* One layout, ticked or not. A button rather than a checkbox so the existing
+   .preset styling carries over; `aria-pressed` is what makes it a toggle to
+   a screen reader. */
+function presetToggle(key, p, after) {
+  const b = document.createElement("button");
+  const on = activePresets.has(key);
+  b.className = "preset" + (on ? " active" : "");
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  b.innerHTML = `<span aria-hidden="true">${on ? "☑" : "☐"}</span> ${esc(p.label)}`;
+  b.onclick = () => {
+    activePresets.has(key) ? activePresets.delete(key) : activePresets.add(key);
+    after();
+  };
+  return b;
 }
 
 function missingBanner(missing, where) {
@@ -2083,10 +2334,15 @@ function missingBanner(missing, where) {
     ${missing.length === 1 ? "it" : "them"}, or edit the layout there.</div>`;
 }
 
-function renderLayout() {
-  const p = presetData.presets[activePreset];
-  $("presetDesc").textContent = p.description;
-  let html = `<div class="chain"><span class="term">N</span>`;
+/* One chain diagram for a layout, with its own missing-parts alert. Several
+   are stacked when several are ticked: each is a construct of its own, so
+   each gets shown rather than averaged into one picture. */
+function layoutDiagram(key, p, heading) {
+  let html = heading
+    ? `<p class="hint" style="margin:16px 0 4px"><strong>${esc(p.label)}</strong>${
+        p.description ? ` — ${esc(p.description)}` : ``}</p>`
+    : ``;
+  html += `<div class="chain"><span class="term">N</span>`;
   p.layout.forEach((s, i) => {
     if (i) html += `<span class="arrow">→</span>`;
     const missing = s.detail === "not in the parts table";
@@ -2094,13 +2350,19 @@ function renderLayout() {
       <span class="nm">${esc(s.label)}</span><span class="dt">${esc(s.detail)}</span></span>`;
   });
   html += `<span class="arrow">→</span><span class="term">C</span></div>`;
-  const alert = presetData.parts_loaded
-    ? missingBanner(p.missing, `The "${p.label}" preset`)
+  return html + missingBanner(p.missing, `The "${p.label}" layout`);
+}
+
+function renderLayout() {
+  const keys = checkedPresets();
+  $("presetDesc").textContent = keys.length === 1
+    ? presetData.presets[keys[0]].description
+    : keys.length
+    ? `${keys.length} layouts ticked — each builds a construct of its own for every antibody.`
+    : "Tick one or more layouts.";
+  $("layoutViz").innerHTML = presetData.parts_loaded
+    ? keys.map((k) => layoutDiagram(k, presetData.presets[k], keys.length > 1)).join("")
     : banner("The parts table is empty — open Utilities \u2192 Construct parts to import one.");
-  $("layoutViz").innerHTML = html + alert;
-  // A layout that cannot be completed must not reach the plan step.
-  const blocked = !presetData.parts_loaded || (p.missing && p.missing.length > 0);
-  $("planBtn").dataset.blocked = blocked ? "1" : "";
   refreshSelection();
 }
 
@@ -2108,9 +2370,23 @@ function renderPlan(d) {
   $("planCount").textContent = `${d.buildable} of ${d.constructs.length} buildable`;
   $("planCount").className = "pill " + (d.buildable === d.constructs.length ? "ok" : "warn");
   let html = "";
+  if (d.presets.length > 1) {
+    html += `<p class="hint" style="margin:0 0 12px">${d.presets.length} layouts
+      × ${d.constructs.length / d.presets.length} antibod${
+      d.constructs.length / d.presets.length === 1 ? "y" : "ies"}. Every record
+      carries its layout in the name, so one file holds them all:<br>` +
+      d.presets.map((p) => `<strong>${esc(p.label)}</strong> — ${p.buildable} of
+        ${p.planned} buildable`).join("<br>") + `</p>`;
+  }
+  let shown = "";
   for (const c of d.constructs) {
+    if (d.presets.length > 1 && c.preset !== shown) {
+      shown = c.preset;
+      html += `<p class="hint" style="margin:18px 0 6px"><strong>${
+        esc(c.preset_label)}</strong></p>`;
+    }
     html += `<div class="plan ${c.ok ? "" : "bad"}"><div class="head">
-      <strong>${esc(c.id)}_BCR</strong>`;
+      <strong>${esc(c.construct_id || c.id)}</strong>`;
     html += c.ok
       ? `<span class="cl-call">${esc(c.cl_part)} — ${esc(c.subclass)}</span>
          <span class="pill">${esc(c.size_note)}</span>`
@@ -2141,7 +2417,10 @@ function renderPlan(d) {
 
 $("planBtn").onclick = async () => {
   $("planBtn").disabled = true;
-  try { renderPlan(await postJSON("/api/plan", { ids: [...selected], preset: activePreset })); }
+  try {
+    renderPlan(await postJSON("/api/plan",
+      { ids: [...selected], presets: checkedPresets() }));
+  }
   catch (e) {
     $("card5").hidden = false;
     $("planOut").innerHTML = banner(e.message);
@@ -2153,13 +2432,24 @@ $("buildBtn").onclick = async () => {
   const btn = $("buildBtn");
   btn.disabled = true;
   try {
-    const d = await postJSON("/api/build",
-      { ids: [...selected], preset: activePreset, output: $("outPath").value });
-    let msg = `Wrote ${d.written} construct${d.written > 1 ? "s" : ""} to ${d.output}`;
+    const d = await postJSON("/api/build", {
+      ids: [...selected],
+      presets: checkedPresets(),
+      output: $("outPath").value,
+    });
+    let msg = `Wrote ${d.written} construct${d.written === 1 ? "" : "s"} to ${d.output}`;
+    if (d.by_preset.length > 1) {
+      msg += ` (${d.by_preset.map((p) => `${p.written} × ${p.label}`).join(", ")})`;
+    }
     if (d.replaced) msg += ` — replaced ${d.replaced} record(s) already in that file`;
-    if (d.skipped.length) msg += `. Skipped: ${d.skipped.join(", ")}`;
-    $("buildOut").innerHTML = okBanner(msg);
-    renderConstructs(d.library);
+    if (d.skipped.length) {
+      msg += `. Skipped: ` + d.skipped
+        .map((sk) => `${sk.id} (${sk.label})`).join(", ");
+    }
+    $("buildOut").innerHTML = okBanner(msg)
+      + `<p class="note mono" style="margin-top:8px">${
+          d.names.map((n) => esc(n)).join("<br>")}</p>`;
+    renderConstructs(d.library, d.legacy);
   } catch (e) { $("buildOut").innerHTML = banner(e.message); }
   finally { btn.disabled = false; }
 };
@@ -2171,10 +2461,10 @@ $("buildBtn").onclick = async () => {
     renderAntibodies(d.antibodies);
     renderExpress(d.antibodies, d.stale_derived, d.isotypes);
     renderParts(d.parts, d.shadowed);
-    renderConstructs(d.constructs);
+    renderConstructs(d.constructs, d.legacy_constructs);
   } catch { $("abOut").innerHTML = banner("Could not load the library."); }
   try {
-    activePreset = null;
+    activePresets.clear();
     await reloadPresets();               // the shipped default becomes active
     renderDraft();
   } catch { $("layoutViz").innerHTML = banner("Could not load the layout presets."); }

@@ -178,6 +178,11 @@ class Store:
         `keep` names the chains ("VH", "VL") whose proposed trim the user
         declined. Those are stored exactly as they came in, and the row says
         so: a sequence is never shortened without someone having said yes.
+
+        A result carrying `accepted_as_given` failed typing and is being
+        stored on the user's insistence (chains.accept_as_given). Nothing was
+        derived for it, so the columns that would otherwise be rule-derived
+        say nothing rather than saying something untrue.
         """
         keep = set(keep)
         notes = []
@@ -195,6 +200,8 @@ class Store:
             return result.input_seq if tag in keep else result.clean_seq
 
         def trim_note(tag, result):
+            if result.accepted_as_given:
+                return "stored as given (failed the sanity check)"
             if tag not in keep:
                 return _trim_note(result)
             return (
@@ -215,6 +222,22 @@ class Store:
                 "the derived whole chains splice a sequence that was kept as "
                 "given, so they are not a V domain plus a constant region"
             )
+        unverified = [
+            tag for tag, r in (("VH", vh), ("VL", vl)) if r.accepted_as_given
+        ]
+        if unverified:
+            notes.append(
+                f"{' and '.join(unverified)} stored as given after failing the "
+                f"sanity check: no chain class, boundary or FR4 was established, "
+                f"so the derived whole chains splice an unverified sequence"
+            )
+
+        def fr4(tag, result, back):
+            """FR4 as observed -- or nothing, if no boundary was ever found."""
+            if result.accepted_as_given:
+                return ""
+            return result.input_seq[max(0, result.v_end - back) : result.v_end + 1]
+
         return {
             "id": antibody_id,
             "vh_seq": vh_seq,
@@ -231,8 +254,8 @@ class Store:
             # records that the boundary landed where the rules say it should.
             # Taken from the detected V end rather than the tail of what is
             # stored, so it is still FR4 when a C-terminal trim was declined.
-            "vh_fr4": vh.input_seq[max(0, vh.v_end - 10) : vh.v_end + 1],
-            "vl_fr4": vl.input_seq[max(0, vl.v_end - 9) : vl.v_end + 1],
+            "vh_fr4": fr4("VH", vh, 10),
+            "vl_fr4": fr4("VL", vl, 9),
             "light_chain": chains["light_chain"],
             "heavy_chain_igg1": chains["heavy_chain_igg1"],
             "heavy_chain_igm": chains["heavy_chain_igm"],
@@ -381,6 +404,66 @@ class Store:
 
     # --- constructs ------------------------------------------------------
 
+    @staticmethod
+    def construct_id(antibody_id: str, preset: str) -> str:
+        """The row key for one antibody built under one layout.
+
+        The same name the FASTA record carries: assemble.construct_name owns
+        the rule, so the table and the file cannot disagree.
+        """
+        from . import assemble
+
+        return assemble.construct_name(antibody_id, preset)
+
+    def legacy_constructs(self) -> list[dict]:
+        """Rows keyed before the layout was part of the name.
+
+        Their id is `<antibody>_BCR`, which cannot tell two layouts of one
+        antibody apart. Each row already records the layout it was built
+        under, so the name it should have is computable -- but renaming a row
+        is a modification, so these are reported and renamed only when asked.
+        A row whose preset is blank cannot be mended this way and is left out.
+        """
+        out = []
+        for row in self.constructs.read():
+            antibody_id = row.get("antibody_id", "")
+            preset = row.get("preset", "")
+            if not antibody_id or not preset:
+                continue
+            if row["id"] == self.construct_id(antibody_id, preset):
+                continue
+            if row["id"] != f"{antibody_id}_BCR":
+                continue   # a name the user chose; not ours to tidy
+            out.append({
+                "id": row["id"],
+                "new_id": self.construct_id(antibody_id, preset),
+                "antibody_id": antibody_id,
+                "preset": preset,
+            })
+        return out
+
+    def rename_legacy_constructs(self, ids) -> list[dict]:
+        """Give the named legacy rows their layout-qualified ids.
+
+        Returns what moved. A rename that would collide with a row already
+        there is skipped, not merged: the newer row is the built one.
+        """
+        wanted = {str(i) for i in ids}
+        rows = self.constructs.read()
+        taken = {row["id"] for row in rows}
+        moved = []
+        for entry in self.legacy_constructs():
+            if entry["id"] not in wanted or entry["new_id"] in taken:
+                continue
+            for row in rows:
+                if row["id"] == entry["id"]:
+                    row["id"] = entry["new_id"]
+                    taken.add(entry["new_id"])
+                    moved.append(entry)
+        if moved:
+            self.constructs.write_all(rows)
+        return moved
+
     def construct_row(self, construct, preset, source_file) -> dict:
         """Build a row from an assembled bcr.assemble.Construct."""
         from . import assemble
@@ -395,7 +478,7 @@ class Store:
             # subclass names it just as well.
             cl_part = assemble.CL_FOR_SUBCLASS.get(construct.subclass or "", "")
         return {
-            "id": f"{construct.name}_BCR",
+            "id": self.construct_id(construct.name, preset),
             "antibody_id": construct.name,
             "preset": preset,
             "subclass": construct.subclass or "",

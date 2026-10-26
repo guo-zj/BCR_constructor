@@ -8,10 +8,12 @@ import unittest
 
 from bcr import assemble, chains, read_fasta
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
 PARTS = pathlib.Path(__file__).parent / "fixtures" / "parts_sc.fasta"
 RESERVED = pathlib.Path(__file__).parent / "fixtures" / "parts_reserved.fasta"
 FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "example_input.fasta"
+# The pinned GL_VRC01 pair. Tests never read the working FASTAs in the
+# project root: those are the user's to rename, move or rewrite.
+VRC01 = pathlib.Path(__file__).parent / "fixtures" / "vrc01.fasta"
 
 
 def typed(path):
@@ -127,7 +129,7 @@ class BuildTests(unittest.TestCase):
 
     def test_default_layout_is_signal_lightchain_linker_heavychain(self):
         """The shipped default is the express single-chain BCR."""
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         self.assertTrue(c.ok, c.errors)
         labels = [s.label.split(":")[0] for s in c.segments]
         self.assertEqual(labels, ["SignalHC", "LC", "LinkerSC", "HC", "Stop"])
@@ -139,7 +141,7 @@ class BuildTests(unittest.TestCase):
         constant, VH and the CH part by hand would, or the two ways of
         describing one format would quietly disagree.
         """
-        results = [r for r in typed(ROOT / "sequences.fasta") if r.ok]
+        results = [r for r in typed(VRC01) if r.ok]
         chains = assemble.pair_chains(results)["GL_VRC01"]
         vh, vl = chains["heavy"], chains["light"]
         explicit = [
@@ -158,17 +160,17 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(a.seq, b.seq)
 
     def test_construct_is_exact_concatenation_of_its_parts(self):
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         self.assertEqual(c.seq, "".join(s.seq for s in c.segments))
         self.assertEqual(len(c.seq), sum(len(s.seq) for s in c.segments))
 
     def test_segment_coordinates_address_the_right_residues(self):
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         for seg in c.segments:
             self.assertEqual(c.seq[seg.start - 1 : seg.end], seg.seq, seg.label)
 
     def test_stop_codon_survives_into_the_construct(self):
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         self.assertTrue(c.seq.endswith("*"))
         self.assertTrue(c.has_stop)
         # Exactly one, and only at the very end.
@@ -176,14 +178,14 @@ class BuildTests(unittest.TestCase):
         self.assertNotIn("*", c.seq[:-1])
 
     def test_residue_count_excludes_the_stop(self):
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         self.assertEqual(c.residue_count, len(c.seq) - 1)
         self.assertIn("+ stop", c.size_note)
 
     def test_stop_is_appended_although_no_part_carries_one(self):
         """Parts are stop-free, so the layout must supply exactly one."""
         self.assertFalse(any("*" in s for s in self.parts.values()))
-        results = [r for r in typed(ROOT / "sequences.fasta") if r.ok]
+        results = [r for r in typed(VRC01) if r.ok]
         chain_map = assemble.pair_chains(results)["GL_VRC01"]
         c = assemble.build(
             "GL_VRC01", chain_map.get("heavy"), chain_map.get("light"), self.parts
@@ -194,7 +196,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(c.residue_count, len(c.seq) - 1)
 
     def test_kappa_vl_takes_igkc(self):
-        c = self.build_from(ROOT / "sequences.fasta", "GL_VRC01")
+        c = self.build_from(VRC01, "GL_VRC01")
         self.assertEqual(c.subclass, "kappa")
         # The express layout folds the constant region into the light chain,
         # so it shows in the segment label rather than as a segment of its own.
@@ -241,7 +243,7 @@ class JunctionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.parts, _ = assemble.load_parts(PARTS)
-        results = [r for r in typed(ROOT / "sequences.fasta") if r.ok]
+        results = [r for r in typed(VRC01) if r.ok]
         chain_map = assemble.pair_chains(results)["GL_VRC01"]
         cls.c = assemble.build(
             "GL_VRC01", chain_map.get("heavy"), chain_map.get("light"), cls.parts
@@ -263,7 +265,7 @@ class JunctionTests(unittest.TestCase):
     def test_internal_stop_is_an_error(self):
         parts = dict(self.parts)
         parts["LinkerSC"] = "GGSSGS*GGSAGG"
-        results = [r for r in typed(ROOT / "sequences.fasta") if r.ok]
+        results = [r for r in typed(VRC01) if r.ok]
         chain_map = assemble.pair_chains(results)["GL_VRC01"]
         c = assemble.build(
             "GL_VRC01", chain_map.get("heavy"), chain_map.get("light"), parts

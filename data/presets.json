@@ -146,7 +146,7 @@
     "slots": [
       {
         "kind": "part",
-        "part": "SignalHC"
+        "part": "Signal"
       },
       {
         "kind": "vl"
@@ -177,7 +177,7 @@
     "slots": [
       {
         "kind": "part",
-        "part": "SignalHC"
+        "part": "Signal"
       },
       {
         "kind": "vl"

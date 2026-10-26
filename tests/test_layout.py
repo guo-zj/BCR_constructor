@@ -254,7 +254,10 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
 
         written = read_fasta(self.out)
         self.assertEqual(len(written), 1)
-        self.assertEqual(written[0].name, "GL_VRC01_BCR")
+        self.assertEqual(
+            written[0].name,
+            Store.construct_id("GL_VRC01", assemble.DEFAULT_PRESET),
+        )
         self.assertTrue(written[0].seq.endswith("*"))
 
         # Identical to assembling straight from the store.
@@ -292,7 +295,7 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
             # The intrinsic parts are always present, so an empty table is
             # not the complaint -- the parts the layout names by hand are.
             error = res.get_json()["error"]
-            self.assertIn("not in the parts table", error)
+            self.assertIn("missing from the parts table", error)
             self.assertIn("SignalHC", error)
         finally:
             shutil.rmtree(empty, ignore_errors=True)
@@ -345,6 +348,12 @@ class ConstructLibraryTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
+    #: The name one antibody takes under the default layout. Derived, because
+    #: the build mode is part of every construct name.
+    @property
+    def built_id(self):
+        return Store.construct_id("GL_VRC01", assemble.DEFAULT_PRESET)
+
     def build(self):
         return self.client.post(
             "/api/build", json={"ids": ["GL_VRC01"], "output": str(self.out)}
@@ -354,7 +363,7 @@ class ConstructLibraryTests(unittest.TestCase):
         d = self.build()
         self.assertEqual(len(d["library"]), 1)
         row = d["library"][0]
-        self.assertEqual(row["id"], "GL_VRC01_BCR")
+        self.assertEqual(row["id"], self.built_id)
         self.assertEqual(row["antibody_id"], "GL_VRC01")
         self.assertEqual(row["cl_part"], "IGKC")
         self.assertEqual(row["preset"], assemble.DEFAULT_PRESET)
@@ -364,7 +373,7 @@ class ConstructLibraryTests(unittest.TestCase):
     def test_stored_sequence_matches_the_written_fasta(self):
         self.build()
         written = read_fasta(self.out)[0]
-        row = self.store.constructs.read_map()["GL_VRC01_BCR"]
+        row = self.store.constructs.read_map()[self.built_id]
         self.assertEqual(row["seq"], written.seq)
 
     def test_rebuilding_updates_rather_than_duplicates(self):
@@ -376,7 +385,7 @@ class ConstructLibraryTests(unittest.TestCase):
         import json
 
         self.build()
-        row = self.store.constructs.read_map()["GL_VRC01_BCR"]
+        row = self.store.constructs.read_map()[self.built_id]
         segments = json.loads(row["segments_json"])
         self.assertEqual(
             [s["label"] for s in segments],
@@ -392,12 +401,12 @@ class ConstructLibraryTests(unittest.TestCase):
     def test_constructs_endpoint_lists_them(self):
         self.build()
         d = self.client.get("/api/constructs").get_json()
-        self.assertEqual([c["id"] for c in d["constructs"]], ["GL_VRC01_BCR"])
+        self.assertEqual([c["id"] for c in d["constructs"]], [self.built_id])
 
     def test_delete_removes_a_construct(self):
         self.build()
         res = self.client.post(
-            "/api/construct/delete", json={"id": "GL_VRC01_BCR"}
+            "/api/construct/delete", json={"id": self.built_id}
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.get_json()["library"], [])
@@ -407,12 +416,12 @@ class ConstructLibraryTests(unittest.TestCase):
         target = self.dir / "export.fasta"
         res = self.client.post(
             "/api/constructs/export",
-            json={"ids": ["GL_VRC01_BCR"], "output": str(target)},
+            json={"ids": [self.built_id], "output": str(target)},
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.get_json()["written"], 1)
         exported = read_fasta(target)
-        self.assertEqual(exported[0].name, "GL_VRC01_BCR")
+        self.assertEqual(exported[0].name, self.built_id)
         self.assertEqual(exported[0].seq, read_fasta(self.out)[0].seq)
 
     def test_export_refuses_an_unknown_id(self):

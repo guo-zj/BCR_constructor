@@ -543,6 +543,17 @@ def pair_chains(results: list[ChainResult]) -> dict[str, dict[str, ChainResult]]
     return paired
 
 
+def construct_name(antibody_id: str, preset: str) -> str:
+    """What one antibody built under one layout is called.
+
+    The layout is part of the name, because one run can build the same
+    antibody several ways and they all land in one FASTA: the build mode is
+    what keeps the records -- and the stored rows -- apart. The CLI and the
+    web UI both come through here, so the two cannot drift.
+    """
+    return f"{antibody_id}_BCR_{preset}"
+
+
 def build_from_layout(
     antibody_id: str,
     vh_seq: str,

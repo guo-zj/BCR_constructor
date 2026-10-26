@@ -211,5 +211,88 @@ class LongCdr3Tests(unittest.TestCase):
         self.assertEqual(r.v_end, len(self.C05_VH) - 1)
 
 
+class AcceptAsGivenTests(unittest.TestCase):
+    """Overruling a failure stores the sequence as it came in, and nothing else.
+
+    chains.accept_as_given is the only way a rejected record reaches the
+    store, so what it does and refuses to do is the whole guarantee.
+    """
+
+    GFP = "MVSKGEELFTGVVPILVELDGDVNGHKFSVSGEGEGDATYGKLTLKFICTTGKLPVPWPTLVTTF"
+
+    def test_the_sequence_is_stored_whole_and_untrimmed(self):
+        r = chains.accept_as_given(chains.process("mab_VH", self.GFP))
+        self.assertTrue(r.ok)
+        self.assertTrue(r.accepted_as_given)
+        self.assertEqual(r.clean_seq, self.GFP)
+        self.assertEqual((r.n_trimmed, r.c_trimmed), (0, 0))
+        self.assertEqual((r.v_start, r.v_end), (0, len(self.GFP) - 1))
+
+    def test_nothing_is_derived_from_it(self):
+        r = chains.accept_as_given(chains.process("mab_VH", self.GFP))
+        self.assertEqual(r.confidence, "none")
+        self.assertIsNone(r.subclass)
+
+    def test_a_light_chain_has_to_say_kappa_or_lambda(self):
+        """Both of section 3's checkpoints need a V end, and an overruled
+        record has no boundary at all -- so the user states it."""
+        failed = chains.process("mab_VL", self.GFP)
+        with self.assertRaises(ValueError) as caught:
+            chains.accept_as_given(failed)
+        self.assertIn("kappa or lambda", str(caught.exception))
+        with self.assertRaises(ValueError):
+            chains.accept_as_given(failed, "igkc")
+
+    def test_a_stated_subclass_is_recorded_as_stated(self):
+        r = chains.accept_as_given(chains.process("mab_VL", self.GFP), "lambda")
+        self.assertEqual(r.subclass, "lambda")
+        self.assertTrue(any("stated by you, not derived" in w
+                            for w in r.warnings), r.warnings)
+
+    def test_kappa_lambda_does_not_apply_to_a_heavy_chain(self):
+        with self.assertRaises(ValueError) as caught:
+            chains.accept_as_given(chains.process("mab_VH", self.GFP), "kappa")
+        self.assertIn("does not apply", str(caught.exception))
+
+    def test_the_errors_survive_as_warnings(self):
+        """The verdict was overruled, not withdrawn: it was still true."""
+        r = chains.accept_as_given(chains.process("mab_VH", self.GFP))
+        self.assertEqual(r.errors, [])
+        self.assertTrue(any("did not pass the sanity check" in w
+                            for w in r.warnings))
+        self.assertTrue(any("framework 4" in w for w in r.warnings))
+
+    def test_the_header_label_wins_over_the_detected_class(self):
+        """A mislabelled record is stored as the chain its header claims: the
+        user is insisting on their own label."""
+        light = ("DIQMTQSPSSLSASVGDRVTITCRASQDVNTAVAWYQQKPGKAPKLLIYSASFLYSGV"
+                 "PSRFSGSRSGTDFTLTISSLQPEDFATYYCQQHYTTPPTFGQGTKVEIK")
+        failed = chains.process("mab_VH", light)
+        self.assertEqual(failed.detected, "light")
+        self.assertFalse(failed.ok)
+        self.assertEqual(chains.accept_as_given(failed).detected, "heavy")
+
+    def test_a_passing_record_is_not_a_candidate(self):
+        passed = chains.process(
+            "mab_VL",
+            "DIQMTQSPSSLSASVGDRVTITCRASQDVNTAVAWYQQKPGKAPKLLIYSASFLYSGV"
+            "PSRFSGSRSGTDFTLTISSLQPEDFATYYCQQHYTTPPTFGQGTKVEIK",
+        )
+        self.assertTrue(passed.ok)
+        chain, reason = chains.can_accept_as_given(passed)
+        self.assertIsNone(chain)
+        self.assertIn("passed the sanity check", reason)
+
+    def test_a_non_sequence_is_refused(self):
+        for seq, expect in (("QVQL123@@", "not amino acids"), ("", "no sequence")):
+            with self.subTest(seq=seq):
+                failed = chains.process("mab_VH", seq)
+                chain, reason = chains.can_accept_as_given(failed)
+                self.assertIsNone(chain)
+                self.assertIn(expect, reason)
+                with self.assertRaises(ValueError):
+                    chains.accept_as_given(failed)
+
+
 if __name__ == "__main__":
     unittest.main()

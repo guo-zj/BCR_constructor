@@ -143,10 +143,13 @@ def cmd_build(args) -> int:
             name, chain_map.get("heavy"), chain_map.get("light"), parts
         )
         constructs.append(construct)
+        # The default layout is the only one the CLI builds, but the name
+        # still says so: the web UI can build several, into one file.
+        record_name = assemble.construct_name(name, assemble.DEFAULT_PRESET)
 
         if construct.ok:
             print(
-                f"  OK    {name}_BCR: {construct.size_note} "
+                f"  OK    {record_name}: {construct.size_note} "
                 f"({construct.subclass})"
             )
             print(f"          layout: {construct.layout}")
@@ -171,7 +174,7 @@ def cmd_build(args) -> int:
     if built:
         out = [
             Record(
-                name=f"{c.name}_BCR",
+                name=assemble.construct_name(c.name, assemble.DEFAULT_PRESET),
                 seq=c.seq,
                 description=f"{c.subclass} BCR, {c.size_note} | {c.layout}",
             )

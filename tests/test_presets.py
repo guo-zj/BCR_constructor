@@ -480,10 +480,12 @@ class MissingPartAlertTests(unittest.TestCase):
         res = self.client.post("/api/plan", json={"ids": ["GL_VRC01"]})
         self.assertEqual(res.status_code, 400)
         data = res.get_json()
-        self.assertIn("not in the parts table", data["error"])
+        self.assertIn("missing from the parts table", data["error"])
         self.assertIn("SignalHC", data["error"])
         self.assertIn("did you mean 'Signal'", data["error"])
         self.assertEqual(len(data["missing"]), 2)
+        # and which layout wanted them, since a plan can name several
+        self.assertIn(assemble.DEFAULT_PRESET, data["missing_by_preset"])
 
     def test_build_refuses_rather_than_assembling_a_gap(self):
         out = self.dir / "x.fasta"

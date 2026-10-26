@@ -68,6 +68,10 @@ class ChainResult:
     evidence: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # True when the rules rejected this record and the user chose to store it
+    # anyway. The sequence is then whatever came in, untrimmed and untyped;
+    # see accept_as_given.
+    accepted_as_given: bool = False
 
     @property
     def ok(self) -> bool:
@@ -402,3 +406,115 @@ def process(name: str, seq: str) -> ChainResult:
         )
 
     return result
+
+
+# --- storing a record the rules rejected ----------------------------------
+#
+# Typing is a judgement, and a judgement can be wrong: an engineered format,
+# a chimera, a fragment the FR4 regexes do not recognise. So a failure is an
+# answer the user may overrule -- but only in one direction. Overruling stores
+# the sequence exactly as it came in, with no boundary call and no trim, and
+# the row says so, because assembly splices whatever is stored verbatim.
+
+
+def can_accept_as_given(result: ChainResult) -> tuple[str | None, str]:
+    """Whether a rejected record could still be stored verbatim.
+
+    Returns (chain, "") with the chain it would be stored as, or (None, why)
+    when it could not be. Two failures are not a judgement and cannot be
+    overruled: a sequence holding characters that are not amino acids is not a
+    sequence, and an empty one has nothing to store. For the rest, something
+    still has to say which chain it is -- the header's _VH/_VL suffix, or
+    failing that the class the sequence read as.
+    """
+    if result.ok:
+        return None, "this record passed the sanity check"
+    if not result.input_seq:
+        return None, "there is no sequence to store"
+    bad = sorted(set(result.input_seq) - rules.AMINO_ACIDS)
+    if bad:
+        return None, (
+            f"the sequence holds characters that are not amino acids "
+            f"({''.join(bad)}); correct those first"
+        )
+    chain = result.declared or result.detected
+    if not chain:
+        return None, (
+            "nothing says whether this is a heavy or a light chain: the header "
+            "carries no _VH/_VL suffix and the sequence read as neither"
+        )
+    return chain, ""
+
+
+#: Kappa or lambda has to come from the user for a light chain stored as
+#: given: both checkpoints in section 3 need a V end, and an overruled record
+#: has no boundary at all. Without it the row could not name a CL, so the
+#: whole light chain and every express layout would be unbuildable.
+LIGHT_SUBCLASSES = ("kappa", "lambda")
+
+
+def accept_as_given(result: ChainResult, subclass: str | None = None) -> ChainResult:
+    """Accept a rejected record exactly as it came in.
+
+    Raises ValueError when the failure is not one that can be overruled. The
+    chain is the one the header declared where it declared one -- the user is
+    insisting on their own label, so it is their label that is honoured, not
+    the class the sequence read as.
+
+    A light chain needs `subclass`: "kappa" or "lambda". Nothing can be read
+    off the sequence without a V end, so the user states it, and the row
+    records that they stated it rather than that it was derived.
+    """
+    chain, reason = can_accept_as_given(result)
+    if not chain:
+        raise ValueError(f"'{result.name}' cannot be stored as given: {reason}.")
+
+    subclass = (subclass or "").strip().lower() or None
+    if chain == "light":
+        if subclass not in LIGHT_SUBCLASSES:
+            raise ValueError(
+                f"'{result.name}' is a light chain, so storing it as given "
+                f"needs you to say whether it is kappa or lambda: nothing can "
+                f"be read off a sequence whose V domain was never found"
+                + (f" (not {subclass!r})" if subclass else "")
+            )
+    elif subclass:
+        raise ValueError(
+            f"'{result.name}' is a heavy chain; kappa/lambda does not apply to it"
+        )
+
+    seq = result.input_seq
+    accepted = ChainResult(
+        name=result.name,
+        declared=result.declared,
+        detected=chain,
+        # Stated, not derived: no boundary was established, so neither of
+        # section 3's checkpoints could be read.
+        subclass=subclass,
+        clean_seq=seq,
+        input_seq=seq,
+        v_start=0,
+        v_end=len(seq) - 1,
+        n_trimmed=0,
+        c_trimmed=0,
+        score=result.score,
+        confidence="none",
+        evidence=list(result.evidence),
+        accepted_as_given=True,
+    )
+    accepted.warnings.append(
+        f"stored as given at your request; it did not pass the sanity check: "
+        f"{'; '.join(result.errors)}"
+    )
+    accepted.warnings.append(
+        f"not confirmed to be a {chain} V domain and not trimmed, so all "
+        f"{len(seq)} residues are stored and assembly will splice them verbatim"
+    )
+    if subclass:
+        accepted.warnings.append(
+            f"{subclass} stated by you, not derived: neither the V-region nor "
+            f"the C-region checkpoint of section 3 could be read, so the CL "
+            f"this chain is given rests on your word alone"
+        )
+    accepted.warnings.extend(result.warnings)
+    return accepted
