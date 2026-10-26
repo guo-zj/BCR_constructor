@@ -126,10 +126,10 @@ python3 -m bcr.cli build sequences.fasta misc_2A.fasta
   OK    C05_VH: heavy, 138 aa  [already clean]  (high confidence)
           warning: V domain is 138 aa, outside the usual 98-128 for heavy
 
-Assembling constructs: SignalHC | Light chain (VL+CL) | LinkerSC | Heavy chain IgG1 | Stop
+Assembling constructs: SignalSC | Light chain (VL+CL) | LinkerSC | Heavy chain IgG1 | Stop
 
   OK    GL_VRC01_BCR_single_chain_bcr_igg1: 806 aa + stop (kappa)
-          layout: SignalHC(19) | LC:GL_VRC01(VL+IGKC)(210) | LinkerSC(57) | HC:GL_VRC01(VH+CHTMCTIgG1)(520) | Stop(1)
+          layout: SignalSC(19) | LC:GL_VRC01(VL+IGKC)(210) | LinkerSC(57) | HC:GL_VRC01(VH+CHTMCTIgG1)(520) | Stop(1)
   OK    C05_BCR_single_chain_bcr_igg1: 827 aa + stop (kappa)
 ```
 
@@ -166,7 +166,7 @@ cannot name one outright. Which of the two is used is decided per antibody
 from its κ/λ call.
 
 ```
->SignalHC
+>SignalSC
 MGWSCIILFLVATATGVHS
 >LinkerSC
 GGSSGSGSGSNWSHPQFEK...
@@ -233,8 +233,8 @@ offers to write them — it will not rewrite the CSV behind your back.
 Four layouts come with express mode:
 
 ```
-Single chain BCR_IGG1   SignalHC → light chain → LinkerSC → heavy chain IgG1 → Stop
-Single chain BCR_IGM    SignalHC → light chain → LinkerSC → heavy chain IgM  → Stop
+Single chain BCR_IGG1   SignalSC → light chain → LinkerSC → heavy chain IgG1 → Stop
+Single chain BCR_IGM    SignalSC → light chain → LinkerSC → heavy chain IgM  → Stop
 2Alinked_IGG1           SignalHC → heavy chain IgG1 → Furin → F2A → SignalLC
                                  → light chain → T2A → EGFP → Stop
 2Alinked_IGM            as above, with the IgM heavy chain
@@ -270,7 +270,7 @@ A layout is an ordered list of components, N- to C-terminus. Four ship, all of
 them express layouts; **Single chain BCR_IGG1** is the default:
 
 ```
-SignalHC → light chain → LinkerSC → heavy chain IgG1 → Stop
+SignalSC → light chain → LinkerSC → heavy chain IgG1 → Stop
 ```
 
 Components are of seven kinds: a named `part` from the parts table, the

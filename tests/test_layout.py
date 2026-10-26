@@ -55,7 +55,7 @@ class PresetTests(unittest.TestCase):
         slots = assemble.PRESETS["single_chain_bcr_igg1"]["slots"]
         self.assertEqual(
             [assemble.slot_label(s) for s in slots],
-            ["SignalHC", "Light chain (VL+CL)", "LinkerSC",
+            ["SignalSC", "Light chain (VL+CL)", "LinkerSC",
              "Heavy chain IgG1", "Stop"],
         )
 
@@ -75,7 +75,7 @@ class PresetTests(unittest.TestCase):
         parts, _ = assemble.load_parts(PARTS)
         layout = assemble.describe_layout("single_chain_bcr_igg1", parts)
         by_label = {s["label"]: s for s in layout}
-        self.assertEqual(by_label["SignalHC"]["length"], 19)
+        self.assertEqual(by_label["SignalSC"]["length"], 19)
         self.assertEqual(by_label["LinkerSC"]["length"], 57)
         # A whole-chain slot names what it resolves to rather than a length,
         # since the V domain comes from the antibody.
@@ -84,7 +84,7 @@ class PresetTests(unittest.TestCase):
 
     def test_describe_layout_flags_a_part_that_is_not_loaded(self):
         layout = assemble.describe_layout("single_chain_bcr_igg1", {})
-        signal = next(s for s in layout if s["label"] == "SignalHC")
+        signal = next(s for s in layout if s["label"] == "SignalSC")
         self.assertEqual(signal["detail"], "not in the parts table")
 
 
@@ -211,7 +211,7 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
         labels = [s["label"] for s in d["presets"][d["default"]]["layout"]]
         self.assertEqual(
             labels,
-            ["SignalHC", "Light chain (VL+CL)", "LinkerSC",
+            ["SignalSC", "Light chain (VL+CL)", "LinkerSC",
              "Heavy chain IgG1", "Stop"],
         )
 
@@ -226,7 +226,7 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
         self.assertIn("+ stop", c["size_note"])
         self.assertEqual(
             [s["label"] for s in c["segments"]],
-            ["SignalHC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
+            ["SignalSC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
              "HC:GL_VRC01(VH+CHTMCTIgG1)", "Stop"],
         )
 
@@ -296,7 +296,7 @@ class PlanAndBuildEndpointTests(unittest.TestCase):
             # not the complaint -- the parts the layout names by hand are.
             error = res.get_json()["error"]
             self.assertIn("missing from the parts table", error)
-            self.assertIn("SignalHC", error)
+            self.assertIn("SignalSC", error)
         finally:
             shutil.rmtree(empty, ignore_errors=True)
 
@@ -389,7 +389,7 @@ class ConstructLibraryTests(unittest.TestCase):
         segments = json.loads(row["segments_json"])
         self.assertEqual(
             [s["label"] for s in segments],
-            ["SignalHC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
+            ["SignalSC", "LC:GL_VRC01(VL+IGKC)", "LinkerSC",
              "HC:GL_VRC01(VH+CHTMCTIgG1)", "Stop"],
         )
         # Coordinates must still address the stored sequence correctly.

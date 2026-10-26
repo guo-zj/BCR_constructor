@@ -114,7 +114,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(row["has_stop"], "yes")
         segments = json.loads(row["segments_json"])
         self.assertEqual(len(segments), 5)
-        self.assertEqual(segments[0]["label"], "SignalHC")
+        self.assertEqual(segments[0]["label"], "SignalSC")
         self.assertEqual(segments[-1]["end"], len(c.seq))
 
 
@@ -418,7 +418,7 @@ class PartsImportTests(unittest.TestCase):
         data = self.preview(PARTS).get_json()
         self.assertEqual(
             data["summary"],
-            {"new": 8, "identical": 0, "differs": 0, "reserved": 0},
+            {"new": 9, "identical": 0, "differs": 0, "reserved": 0},
         )
         self.assertTrue(all(p["status"] == "new" for p in data["parts"]))
 
@@ -427,7 +427,7 @@ class PartsImportTests(unittest.TestCase):
         data = self.preview(PARTS).get_json()
         self.assertEqual(
             data["summary"],
-            {"new": 0, "identical": 8, "differs": 0, "reserved": 0},
+            {"new": 0, "identical": 9, "differs": 0, "reserved": 0},
         )
 
     def test_a_changed_part_is_detected_with_its_first_difference(self):

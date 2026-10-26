@@ -132,7 +132,7 @@ class BuildTests(unittest.TestCase):
         c = self.build_from(VRC01, "GL_VRC01")
         self.assertTrue(c.ok, c.errors)
         labels = [s.label.split(":")[0] for s in c.segments]
-        self.assertEqual(labels, ["SignalHC", "LC", "LinkerSC", "HC", "Stop"])
+        self.assertEqual(labels, ["SignalSC", "LC", "LinkerSC", "HC", "Stop"])
 
     def test_the_express_layout_matches_its_explicit_equivalent(self):
         """light_chain / heavy_chain are shorthand, not a different construct.
@@ -145,7 +145,7 @@ class BuildTests(unittest.TestCase):
         chains = assemble.pair_chains(results)["GL_VRC01"]
         vh, vl = chains["heavy"], chains["light"]
         explicit = [
-            {"kind": "part", "part": "SignalHC"},
+            {"kind": "part", "part": "SignalSC"},
             {"kind": "vl"},
             {"kind": "light_constant"},
             {"kind": "part", "part": "LinkerSC"},
@@ -251,7 +251,7 @@ class JunctionTests(unittest.TestCase):
 
     def test_signal_is_flush_against_the_mature_n_terminus(self):
         """Section 6: no GS linker between leader and mature N-terminus."""
-        signal = self.parts["SignalHC"]
+        signal = self.parts["SignalSC"]
         self.assertTrue(self.c.seq.startswith(signal))
         self.assertEqual(self.c.seq[len(signal) : len(signal) + 6], "EIVLTQ")
         self.assertNotEqual(self.c.seq[len(signal) : len(signal) + 2], "GS")

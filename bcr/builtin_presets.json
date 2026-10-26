@@ -13,7 +13,7 @@
       "express": true,
       "description": "Membrane-bound single-chain BCR: the whole light chain first, then a flexible linker, then the IgG1 heavy chain with CH1-CH3 and the transmembrane tail.",
       "slots": [
-        { "kind": "part", "part": "SignalHC" },
+        { "kind": "part", "part": "SignalSC" },
         { "kind": "light_chain" },
         { "kind": "part", "part": "LinkerSC" },
         { "kind": "heavy_chain", "isotype": "igg1" },
@@ -25,7 +25,7 @@
       "express": true,
       "description": "Membrane-bound single-chain BCR: the whole light chain first, then a flexible linker, then the IgM heavy chain with CH1-CH4 and the transmembrane tail.",
       "slots": [
-        { "kind": "part", "part": "SignalHC" },
+        { "kind": "part", "part": "SignalSC" },
         { "kind": "light_chain" },
         { "kind": "part", "part": "LinkerSC" },
         { "kind": "heavy_chain", "isotype": "igm" },

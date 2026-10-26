@@ -274,7 +274,7 @@ class PresetApiTests(unittest.TestCase):
                 "Light chain", "Heavy chain IgG1", "Heavy chain IgM",
                 # the intrinsic heavy constants come first, then the user's
                 "CHTMCTIgG1", "CHTMCTIgM",
-                "SignalHC", "LinkerSC", "SignalLC", "Furin", "F2A", "T2A",
+                "SignalSC", "SignalHC", "LinkerSC", "SignalLC", "Furin", "F2A", "T2A",
                 "EGFP", "CHandCTSC",
                 "Stop",
             ],
@@ -465,7 +465,7 @@ class MissingPartAlertTests(unittest.TestCase):
         missing = presets[assemble.DEFAULT_PRESET]["missing"]
         # CHTMCTIgG1 is intrinsic, so it is never missing; the two parts the
         # layout names by hand are what the old file does not carry.
-        self.assertEqual([m["part"] for m in missing], ["SignalHC", "LinkerSC"])
+        self.assertEqual([m["part"] for m in missing], ["SignalSC", "LinkerSC"])
 
     def test_a_near_miss_name_gets_a_suggestion(self):
         presets = self.client.get("/api/presets").get_json()["presets"]
@@ -473,7 +473,7 @@ class MissingPartAlertTests(unittest.TestCase):
             m["part"]: m["suggestion"]
             for m in presets[assemble.DEFAULT_PRESET]["missing"]
         }
-        self.assertEqual(hints["SignalHC"], "Signal")
+        self.assertEqual(hints["SignalSC"], "Signal")
         self.assertEqual(hints["LinkerSC"], "Linker")
 
     def test_plan_refuses_and_names_what_is_missing(self):
@@ -481,7 +481,7 @@ class MissingPartAlertTests(unittest.TestCase):
         self.assertEqual(res.status_code, 400)
         data = res.get_json()
         self.assertIn("missing from the parts table", data["error"])
-        self.assertIn("SignalHC", data["error"])
+        self.assertIn("SignalSC", data["error"])
         self.assertIn("did you mean 'Signal'", data["error"])
         self.assertEqual(len(data["missing"]), 2)
         # and which layout wanted them, since a plan can name several
